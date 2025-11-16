@@ -1,0 +1,273 @@
+"""Utilities for working with markdown requirement templates."""
+import json
+import re
+from pathlib import Path
+from typing import Dict, Any, Optional
+from uuid import UUID
+
+import yaml
+
+from .models import RequirementType
+
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+class MarkdownParseError(Exception):
+    """Raised when markdown content cannot be parsed."""
+    pass
+
+
+def load_template(req_type: RequirementType) -> str:
+    """Load the markdown template for a requirement type.
+
+    Args:
+        req_type: The requirement type (epic, component, feature, requirement)
+
+    Returns:
+        The template content as a string
+
+    Raises:
+        FileNotFoundError: If the template file doesn't exist
+    """
+    template_path = TEMPLATES_DIR / f"{req_type.value}.md"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    return template_path.read_text()
+
+
+def render_template(
+    req_type: RequirementType,
+    title: str,
+    description: str = "",
+    parent_id: Optional[UUID] = None,
+    status: str = "draft",
+    priority: int = 0,
+    tags: list[str] = None,
+) -> str:
+    """Render a markdown template with the provided data.
+
+    Args:
+        req_type: The requirement type
+        title: The requirement title
+        description: The requirement description
+        parent_id: The parent requirement ID (for non-epic types)
+        status: The lifecycle status
+        priority: The priority level
+        tags: List of tags
+
+    Returns:
+        The rendered markdown content
+    """
+    template = load_template(req_type)
+    tags = tags or []
+
+    # Format tags as YAML array
+    tags_yaml = json.dumps(tags)
+
+    # Format parent_id (null for epics, UUID string for others)
+    parent_id_str = str(parent_id) if parent_id else "null"
+
+    # Replace template variables
+    content = template.format(
+        title=title,
+        description=description or "No description provided.",
+        parent_id=parent_id_str,
+        status=status,
+        priority=priority,
+        tags=tags_yaml,
+    )
+
+    return content
+
+
+def parse_markdown(content: str) -> Dict[str, Any]:
+    """Parse markdown content with YAML frontmatter.
+
+    Args:
+        content: The markdown content to parse
+
+    Returns:
+        A dictionary containing:
+        - frontmatter: Dict of YAML frontmatter data
+        - body: The markdown body content
+
+    Raises:
+        MarkdownParseError: If content cannot be parsed
+    """
+    # Match YAML frontmatter pattern (between --- markers)
+    frontmatter_pattern = r'^---\s*\n(.*?)\n---\s*\n(.*)$'
+    match = re.match(frontmatter_pattern, content, re.DOTALL)
+
+    if not match:
+        raise MarkdownParseError(
+            "Invalid markdown format: missing YAML frontmatter. "
+            "Content must start with --- and contain valid YAML metadata."
+        )
+
+    frontmatter_str = match.group(1)
+    body = match.group(2).strip()
+
+    try:
+        frontmatter = yaml.safe_load(frontmatter_str)
+    except yaml.YAMLError as e:
+        raise MarkdownParseError(f"Invalid YAML in frontmatter: {e}")
+
+    if not isinstance(frontmatter, dict):
+        raise MarkdownParseError("Frontmatter must be a YAML dictionary")
+
+    return {
+        "frontmatter": frontmatter,
+        "body": body,
+    }
+
+
+def validate_frontmatter(frontmatter: Dict[str, Any], req_type: RequirementType) -> None:
+    """Validate that frontmatter contains required fields.
+
+    Args:
+        frontmatter: The parsed frontmatter dictionary
+        req_type: The expected requirement type
+
+    Raises:
+        MarkdownParseError: If frontmatter is invalid
+    """
+    # Required fields for all types
+    required_fields = ["type", "title", "status"]
+
+    # parent_id required for non-epic types
+    if req_type != RequirementType.EPIC:
+        required_fields.append("parent_id")
+
+    # Check for missing required fields
+    missing = [f for f in required_fields if f not in frontmatter]
+    if missing:
+        raise MarkdownParseError(
+            f"Missing required frontmatter fields: {', '.join(missing)}"
+        )
+
+    # Validate type matches
+    if frontmatter["type"] != req_type.value:
+        raise MarkdownParseError(
+            f"Type mismatch: frontmatter type '{frontmatter['type']}' "
+            f"does not match expected type '{req_type.value}'"
+        )
+
+    # Validate title is not empty
+    if not frontmatter["title"] or not frontmatter["title"].strip():
+        raise MarkdownParseError("Title cannot be empty")
+
+
+def _truncate_description(text: str, max_length: int = 500) -> str:
+    """Truncate description to max_length at word boundary.
+
+    Args:
+        text: The text to truncate
+        max_length: Maximum length (default 500)
+
+    Returns:
+        Truncated text with ellipsis if needed
+    """
+    # Normalize whitespace (collapse newlines and multiple spaces to single space)
+    text = re.sub(r'\s+', ' ', text.strip())
+
+    if len(text) <= max_length:
+        return text
+
+    # Truncate at word boundary
+    truncated = text[:max_length].rsplit(' ', 1)[0]
+    return truncated + '...'
+
+
+def extract_metadata(content: str) -> Dict[str, Any]:
+    """Extract metadata from markdown content.
+
+    This parses the markdown and returns a dictionary with all metadata
+    that can be used to populate database fields.
+
+    Args:
+        content: The markdown content to parse
+
+    Returns:
+        Dictionary containing: type, title, description, status, priority, tags, parent_id
+
+    Raises:
+        MarkdownParseError: If content is invalid
+    """
+    parsed = parse_markdown(content)
+    frontmatter = parsed["frontmatter"]
+    body = parsed["body"]
+
+    # Determine type
+    try:
+        req_type = RequirementType(frontmatter["type"])
+    except (KeyError, ValueError) as e:
+        raise MarkdownParseError(f"Invalid requirement type: {e}")
+
+    # Validate frontmatter
+    validate_frontmatter(frontmatter, req_type)
+
+    # Extract description from body (first paragraph or first section)
+    # Enforce 500 character limit with intelligent truncation
+    description_match = re.search(r'##\s+(?:Vision|Purpose|User Story|Description)\s*\n\n(.+?)(?:\n\n|\n#|$)', body, re.DOTALL)
+    raw_description = description_match.group(1).strip() if description_match else body[:500]
+    description = _truncate_description(raw_description, max_length=500)
+
+    # Build metadata dictionary
+    metadata = {
+        "type": req_type,
+        "title": frontmatter["title"],
+        "description": description,
+        "status": frontmatter.get("status", "draft"),
+        "priority": frontmatter.get("priority", 0),
+        "tags": frontmatter.get("tags", []),
+        "parent_id": frontmatter.get("parent_id"),
+    }
+
+    # Convert parent_id string to UUID if present and not null
+    if metadata["parent_id"] and metadata["parent_id"] != "null":
+        try:
+            metadata["parent_id"] = UUID(metadata["parent_id"])
+        except ValueError as e:
+            raise MarkdownParseError(f"Invalid parent_id UUID: {e}")
+    else:
+        metadata["parent_id"] = None
+
+    return metadata
+
+
+def merge_content(original_content: str, updates: Dict[str, Any]) -> str:
+    """Merge updates into existing markdown content.
+
+    This updates the frontmatter fields while preserving the markdown body.
+
+    Args:
+        original_content: The original markdown content
+        updates: Dictionary of fields to update
+
+    Returns:
+        The updated markdown content
+
+    Raises:
+        MarkdownParseError: If content cannot be parsed
+    """
+    parsed = parse_markdown(original_content)
+    frontmatter = parsed["frontmatter"]
+    body = parsed["body"]
+
+    # Update frontmatter with new values
+    for key, value in updates.items():
+        if key in ["type", "title", "status", "priority", "tags", "parent_id"]:
+            if value is not None:
+                # Convert UUID to string for YAML
+                if isinstance(value, UUID):
+                    frontmatter[key] = str(value)
+                else:
+                    frontmatter[key] = value
+
+    # Reconstruct markdown
+    frontmatter_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+    new_content = f"---\n{frontmatter_yaml}---\n\n{body}"
+
+    return new_content
