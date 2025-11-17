@@ -59,8 +59,6 @@ from .schemas import (
     RequirementListItem,
     RequirementListResponse,
     RequirementHistoryResponse,
-    StatusTransition,
-    PriorityUpdate,
     # Organization schemas
     OrganizationCreate,
     OrganizationUpdate,
@@ -132,8 +130,6 @@ __all__ = [
     "RequirementListItem",
     "RequirementListResponse",
     "RequirementHistoryResponse",
-    "StatusTransition",
-    "PriorityUpdate",
     "OrganizationCreate",
     "OrganizationUpdate",
     "OrganizationResponse",
