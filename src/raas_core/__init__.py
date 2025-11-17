@@ -46,8 +46,6 @@ from .crud import (
     get_requirements,
     get_requirement_children,
     get_requirement_history,
-    transition_requirement_status,
-    update_requirement_priority,
     # User CRUD
     get_user_by_id,
     get_user_by_email,
@@ -124,8 +122,6 @@ __all__ = [
     "get_requirements",
     "get_requirement_children",
     "get_requirement_history",
-    "transition_requirement_status",
-    "update_requirement_priority",
     "get_user_by_id",
     "get_user_by_email",
     "search_users",
