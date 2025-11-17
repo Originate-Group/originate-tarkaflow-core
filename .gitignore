@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+
+# Alembic
+*.pyc
