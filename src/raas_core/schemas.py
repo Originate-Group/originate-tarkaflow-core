@@ -70,6 +70,7 @@ class RequirementListItem(BaseModel):
     """Schema for requirement list items (lightweight, no content field)."""
 
     id: UUID
+    human_readable_id: Optional[str] = None  # e.g., RAAS-FEAT-042
     type: RequirementType
     parent_id: Optional[UUID] = None
     project_id: UUID
@@ -94,6 +95,7 @@ class RequirementResponse(RequirementBase):
     """Schema for full requirement responses (includes content)."""
 
     id: UUID
+    human_readable_id: Optional[str] = None  # e.g., RAAS-FEAT-042
     type: RequirementType
     parent_id: Optional[UUID] = None
     created_at: datetime

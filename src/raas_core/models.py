@@ -289,6 +289,7 @@ class Requirement(Base):
     title = Column(String(200), nullable=False)
     description = Column(String(500))  # Auto-extracted from content
     content = Column(Text)  # Full markdown content with frontmatter
+    human_readable_id = Column(String(20), unique=True, nullable=True, index=True)  # e.g., RAAS-FEAT-042
     status = Column(
         Enum(LifecycleStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=LifecycleStatus.DRAFT, index=True
     )
@@ -417,3 +418,37 @@ class PersonalAccessToken(Base):
 
     def __repr__(self) -> str:
         return f"<PersonalAccessToken {self.name} for user_id={self.user_id}>"
+
+
+class IDSequence(Base):
+    """
+    Tracks next available number for human-readable IDs per project+type.
+
+    Used by database trigger to generate sequential IDs like RAAS-FEAT-042.
+    """
+
+    __tablename__ = "id_sequences"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    requirement_type = Column(String(20), nullable=False)
+    next_number = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    project = relationship("Project")
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("project_id", "requirement_type", name="unique_project_type"),
+        CheckConstraint("next_number > 0", name="chk_next_number_positive"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<IDSequence {self.project_id}:{self.requirement_type} next={self.next_number}>"
