@@ -263,11 +263,19 @@ def merge_content(original_content: str, updates: Dict[str, Any]) -> str:
                 # Convert UUID to string for YAML
                 if isinstance(value, UUID):
                     frontmatter[key] = str(value)
+                # Convert enums to their string values
+                elif hasattr(value, 'value'):
+                    frontmatter[key] = value.value
                 else:
                     frontmatter[key] = value
 
-    # Reconstruct markdown
-    frontmatter_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+    # Convert any remaining enum values in frontmatter to strings for safe YAML serialization
+    for key, value in frontmatter.items():
+        if hasattr(value, 'value'):
+            frontmatter[key] = value.value
+
+    # Reconstruct markdown - use safe_dump to avoid Python-specific tags
+    frontmatter_yaml = yaml.safe_dump(frontmatter, default_flow_style=False, sort_keys=False)
     new_content = f"---\n{frontmatter_yaml}---\n\n{body}"
 
     return new_content
