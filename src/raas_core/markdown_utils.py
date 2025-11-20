@@ -111,7 +111,7 @@ def parse_markdown(content: str) -> Dict[str, Any]:
 
     try:
         frontmatter = yaml.safe_load(frontmatter_str)
-    except yaml.YAMLError as e:
+    except yaml.YAMLError:
         # Try unsafe_load for legacy content with Python object tags
         try:
             frontmatter = yaml.unsafe_load(frontmatter_str)
@@ -119,8 +119,43 @@ def parse_markdown(content: str) -> Dict[str, Any]:
             for key, value in list(frontmatter.items()):
                 if hasattr(value, 'value'):
                     frontmatter[key] = value.value
-        except yaml.YAMLError as e2:
-            raise MarkdownParseError(f"Invalid YAML in frontmatter: {e2}")
+        except Exception:
+            # Last resort: manually parse YAML and extract enum values from Python tags
+            # This handles cases where the Python module path is wrong/missing
+            frontmatter = {}
+            for line in frontmatter_str.split('\n'):
+                # Handle simple key: value pairs
+                if ':' in line and not line.strip().startswith('-'):
+                    key, _, value = line.partition(':')
+                    key = key.strip()
+                    value = value.strip()
+
+                    # Skip Python object tags
+                    if value.startswith('!!python/object'):
+                        continue
+
+                    # Handle quoted strings
+                    if value.startswith('"') or value.startswith("'"):
+                        value = value.strip('"').strip("'")
+
+                    # Handle lists
+                    if value.startswith('['):
+                        import json
+                        try:
+                            value = json.loads(value)
+                        except:
+                            value = []
+
+                    # Store the value
+                    if key and value:
+                        frontmatter[key] = value
+                # Handle array items (for status values under Python tags)
+                elif line.strip().startswith('- ') and 'status' in frontmatter_str:
+                    if 'status' not in frontmatter or isinstance(frontmatter.get('status'), str) and frontmatter['status'].startswith('!!python'):
+                        frontmatter['status'] = line.strip()[2:].strip()
+
+            if not frontmatter:
+                raise MarkdownParseError(f"Could not parse YAML frontmatter")
 
     if not isinstance(frontmatter, dict):
         raise MarkdownParseError("Frontmatter must be a YAML dictionary")
