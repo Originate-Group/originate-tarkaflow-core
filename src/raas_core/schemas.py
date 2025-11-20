@@ -72,6 +72,7 @@ class RequirementListItem(BaseModel):
     id: UUID
     type: RequirementType
     parent_id: Optional[UUID] = None
+    project_id: UUID
     title: str
     description: Optional[str] = None
     status: LifecycleStatus
@@ -200,6 +201,39 @@ class OrganizationListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+# ============================================================================
+# Organization Member Schemas
+# ============================================================================
+
+class OrganizationMemberBase(BaseModel):
+    """Base schema for organization member fields."""
+
+    organization_id: UUID
+    user_id: UUID
+    role: MemberRole = MemberRole.MEMBER
+
+
+class OrganizationMemberCreate(OrganizationMemberBase):
+    """Schema for adding a user to an organization."""
+
+    pass
+
+
+class OrganizationMemberUpdate(BaseModel):
+    """Schema for updating an organization member's role."""
+
+    role: MemberRole
+
+
+class OrganizationMemberResponse(OrganizationMemberBase):
+    """Schema for organization member responses."""
+
+    id: UUID
+    joined_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================

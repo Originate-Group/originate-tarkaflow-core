@@ -184,6 +184,7 @@ def get_requirements(
     search: Optional[str] = None,
     tags: Optional[list[str]] = None,
     organization_ids: Optional[list[UUID]] = None,
+    project_id: Optional[UUID] = None,
 ) -> tuple[list[models.Requirement], int]:
     """
     Get requirements with optional filtering and pagination.
@@ -198,6 +199,7 @@ def get_requirements(
         search: Search in title and description
         tags: Filter by tags (AND logic - requirement must have ALL specified tags)
         organization_ids: Filter by organization IDs (for multi-user access control)
+        project_id: Filter by project ID
 
     Returns:
         Tuple of (requirements list, total count)
@@ -217,6 +219,9 @@ def get_requirements(
 
     if parent_id is not None:
         query = query.filter(models.Requirement.parent_id == parent_id)
+
+    if project_id:
+        query = query.filter(models.Requirement.project_id == project_id)
 
     if search:
         search_pattern = f"%{search}%"
@@ -596,6 +601,152 @@ def delete_organization(db: Session, organization_id: UUID) -> bool:
     db.delete(db_org)
     db.commit()
     logger.debug(f"Deleted organization {organization_id}")
+    return True
+
+
+# ============================================================================
+# Organization Member CRUD Operations
+# ============================================================================
+
+def add_organization_member(
+    db: Session,
+    organization_id: UUID,
+    user_id: UUID,
+    role: models.MemberRole = models.MemberRole.MEMBER,
+) -> models.OrganizationMember:
+    """
+    Add a user to an organization with a specific role.
+
+    Args:
+        db: Database session
+        organization_id: Organization UUID
+        user_id: User UUID
+        role: Organization role (owner, admin, member, viewer)
+
+    Returns:
+        Created organization member instance
+
+    Raises:
+        ValueError: If member already exists
+    """
+    # Check if already a member
+    existing = (
+        db.query(models.OrganizationMember)
+        .filter(
+            and_(
+                models.OrganizationMember.organization_id == organization_id,
+                models.OrganizationMember.user_id == user_id,
+            )
+        )
+        .first()
+    )
+    if existing:
+        raise ValueError("User is already a member of this organization")
+
+    db_member = models.OrganizationMember(
+        organization_id=organization_id,
+        user_id=user_id,
+        role=role,
+    )
+    db.add(db_member)
+    db.commit()
+    db.refresh(db_member)
+    logger.debug(f"Added user {user_id} to organization {organization_id} with role {role.value}")
+    return db_member
+
+
+def get_organization_members(
+    db: Session,
+    organization_id: UUID,
+) -> list[models.OrganizationMember]:
+    """
+    Get all members of an organization.
+
+    Args:
+        db: Database session
+        organization_id: Organization UUID
+
+    Returns:
+        List of organization members
+    """
+    return (
+        db.query(models.OrganizationMember)
+        .filter(models.OrganizationMember.organization_id == organization_id)
+        .order_by(models.OrganizationMember.joined_at)
+        .all()
+    )
+
+
+def update_organization_member_role(
+    db: Session,
+    organization_id: UUID,
+    user_id: UUID,
+    role: models.MemberRole,
+) -> Optional[models.OrganizationMember]:
+    """
+    Update an organization member's role.
+
+    Args:
+        db: Database session
+        organization_id: Organization UUID
+        user_id: User UUID
+        role: New organization role
+
+    Returns:
+        Updated organization member or None if not found
+    """
+    db_member = (
+        db.query(models.OrganizationMember)
+        .filter(
+            and_(
+                models.OrganizationMember.organization_id == organization_id,
+                models.OrganizationMember.user_id == user_id,
+            )
+        )
+        .first()
+    )
+    if not db_member:
+        return None
+
+    db_member.role = role
+    db.commit()
+    db.refresh(db_member)
+    logger.debug(f"Updated user {user_id} role in organization {organization_id} to {role.value}")
+    return db_member
+
+
+def remove_organization_member(
+    db: Session,
+    organization_id: UUID,
+    user_id: UUID,
+) -> bool:
+    """
+    Remove a user from an organization.
+
+    Args:
+        db: Database session
+        organization_id: Organization UUID
+        user_id: User UUID
+
+    Returns:
+        True if removed, False if not found
+    """
+    db_member = (
+        db.query(models.OrganizationMember)
+        .filter(
+            and_(
+                models.OrganizationMember.organization_id == organization_id,
+                models.OrganizationMember.user_id == user_id,
+            )
+        )
+        .first()
+    )
+    if not db_member:
+        return False
+
+    db.delete(db_member)
+    db.commit()
+    logger.debug(f"Removed user {user_id} from organization {organization_id}")
     return True
 
 
@@ -1052,6 +1203,33 @@ def search_users(
                 models.User.full_name.ilike(search_term),
             )
         )
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination and ordering
+    users = query.order_by(models.User.email).offset(skip).limit(limit).all()
+
+    return users, total
+
+
+def list_users(
+    db: Session,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[models.User], int]:
+    """
+    List all active users with pagination.
+
+    Args:
+        db: Database session
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+
+    Returns:
+        Tuple of (users list, total count)
+    """
+    query = db.query(models.User).filter(models.User.is_active == True)
 
     # Get total count before pagination
     total = query.count()
