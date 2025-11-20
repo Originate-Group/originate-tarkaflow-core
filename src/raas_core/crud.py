@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from . import models, schemas
 from .markdown_utils import render_template, extract_metadata, merge_content, MarkdownParseError
 from .quality import calculate_quality_score, is_content_length_valid_for_approval, get_length_validation_error
+from .state_machine import validate_transition, StateTransitionError
 
 logger = logging.getLogger("raas-api.crud")
 
@@ -348,6 +349,26 @@ def update_requirement(
     if "content" in update_data and update_data["content"]:
         try:
             metadata = extract_metadata(update_data["content"])
+
+            # Validate status transition if status is changing
+            if "status" in metadata and metadata["status"] != db_requirement.status:
+                try:
+                    validate_transition(db_requirement.status, metadata["status"])
+                except StateTransitionError as e:
+                    logger.warning(f"State transition blocked: {e}")
+                    # Log failed transition attempt to audit trail
+                    _create_history_entry(
+                        db=db,
+                        requirement_id=requirement_id,
+                        change_type=models.ChangeType.STATUS_CHANGED,
+                        field_name="status",
+                        old_value=db_requirement.status.value,
+                        new_value=metadata["status"].value,
+                        change_reason=f"BLOCKED: {str(e)}",
+                        user_id=user_id,
+                    )
+                    raise ValueError(str(e))
+
             # Update all fields from markdown
             for field in ["title", "description", "status", "tags", "priority"]:
                 if field in metadata:
@@ -371,6 +392,25 @@ def update_requirement(
             raise ValueError(f"Invalid markdown content: {e}")
     else:
         # Update individual fields and regenerate/update markdown
+        # Validate status transition BEFORE making any changes
+        if "status" in update_data and update_data["status"] != db_requirement.status:
+            try:
+                validate_transition(db_requirement.status, update_data["status"])
+            except StateTransitionError as e:
+                logger.warning(f"State transition blocked: {e}")
+                # Log failed transition attempt to audit trail
+                _create_history_entry(
+                    db=db,
+                    requirement_id=requirement_id,
+                    change_type=models.ChangeType.STATUS_CHANGED,
+                    field_name="status",
+                    old_value=db_requirement.status.value,
+                    new_value=update_data["status"].value,
+                    change_reason=f"BLOCKED: {str(e)}",
+                    user_id=user_id,
+                )
+                raise ValueError(str(e))
+
         fields_to_update = {}
         for field, value in update_data.items():
             if field == "content":
