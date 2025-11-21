@@ -922,8 +922,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 result = response.json()
                 logger.info(f"Successfully listed {result['total']} requirements (page {result['page']}/{result['total_pages']})")
 
-                items_text = "\n\n".join([_format_requirement(item) for item in result['items']])
-                summary = f"Found {result['total']} requirements (showing page {result['page']} of {result['total_pages']})\n\n{items_text}"
+                items_text = "\n".join([_format_requirement_summary(item) for item in result['items']])
+                summary = f"Found {result['total']} requirements (page {result['page']}/{result['total_pages']})\n{items_text}"
                 return [TextContent(type="text", text=summary)]
 
             elif name == "get_requirement":
@@ -963,8 +963,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     return [TextContent(type="text", text="No children found for this requirement.")]
 
                 logger.info(f"Successfully retrieved {len(result)} children for requirement {req_id}")
-                children_text = "\n\n".join([_format_requirement(item) for item in result])
-                return [TextContent(type="text", text=f"Children:\n\n{children_text}")]
+                children_text = "\n".join([_format_requirement_summary(item) for item in result])
+                return [TextContent(type="text", text=f"Children ({len(result)}):\n{children_text}")]
 
             elif name == "get_requirement_history":
                 req_id = arguments["requirement_id"]
@@ -1097,6 +1097,14 @@ Created: {req['created_at']}
 Updated: {req['updated_at']}
 
 {body}"""
+
+
+def _format_requirement_summary(req: dict) -> str:
+    """Format a requirement as a compact one-liner for list views (token-efficient)."""
+    readable_id = req.get('human_readable_id', 'NO-ID')
+    status = req.get('status', 'unknown')
+    title = req.get('title', '(untitled)')
+    return f"[{readable_id}] {status}: {title}"
 
 
 def _format_history(entry: dict) -> str:
