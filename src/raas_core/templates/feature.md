@@ -3,7 +3,6 @@ type: feature
 title: "{title}"
 parent_id: {parent_id}
 status: {status}
-priority: {priority}
 tags: {tags}
 ---
 

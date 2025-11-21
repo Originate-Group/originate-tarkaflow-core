@@ -76,7 +76,6 @@ def create_requirement(
     description = metadata["description"]
     status = metadata["status"]
     tags = metadata["tags"]
-    priority = metadata["priority"]
     parent_id = metadata["parent_id"]
 
     # Determine project_id based on requirement type
@@ -146,7 +145,6 @@ def create_requirement(
             content=requirement.content,
             status=status,
             tags=tags,
-            priority=priority,
             content_length=content_length,
             quality_score=quality_score,
             organization_id=organization_id,
@@ -303,9 +301,8 @@ def get_requirements(
     total = query.count()
 
     # Apply pagination and ordering
-    # Sort by priority ascending (lower number = higher priority), then by created_at
     requirements = (
-        query.order_by(models.Requirement.priority.asc(), models.Requirement.created_at)
+        query.order_by(models.Requirement.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -375,7 +372,7 @@ def update_requirement(
                     raise ValueError(str(e))
 
             # Update all fields from markdown
-            for field in ["title", "description", "status", "tags", "priority"]:
+            for field in ["title", "description", "status", "tags"]:
                 if field in metadata:
                     old_value = getattr(db_requirement, field)
                     new_value = metadata[field]
@@ -440,7 +437,6 @@ def update_requirement(
                     description=db_requirement.description or "",
                     parent_id=db_requirement.parent_id,
                     status=db_requirement.status.value,
-                    priority=db_requirement.priority,
                     tags=db_requirement.tags,
                 )
             # Recalculate content length and quality score after content update
@@ -530,7 +526,7 @@ def get_requirement_children(
     return (
         db.query(models.Requirement)
         .filter(models.Requirement.parent_id == parent_id)
-        .order_by(models.Requirement.priority.asc(), models.Requirement.created_at)
+        .order_by(models.Requirement.created_at)
         .all()
     )
 

@@ -43,7 +43,6 @@ def render_template(
     description: str = "",
     parent_id: Optional[UUID] = None,
     status: str = "draft",
-    priority: int = 0,
     tags: list[str] = None,
 ) -> str:
     """Render a markdown template with the provided data.
@@ -54,7 +53,6 @@ def render_template(
         description: The requirement description
         parent_id: The parent requirement ID (for non-epic types)
         status: The lifecycle status
-        priority: The priority level
         tags: List of tags
 
     Returns:
@@ -75,7 +73,6 @@ def render_template(
         description=description or "No description provided.",
         parent_id=parent_id_str,
         status=status,
-        priority=priority,
         tags=tags_yaml,
     )
 
@@ -233,7 +230,7 @@ def extract_metadata(content: str) -> Dict[str, Any]:
         content: The markdown content to parse
 
     Returns:
-        Dictionary containing: type, title, description, status, priority, tags, parent_id
+        Dictionary containing: type, title, description, status, tags, parent_id
 
     Raises:
         MarkdownParseError: If content is invalid
@@ -263,7 +260,6 @@ def extract_metadata(content: str) -> Dict[str, Any]:
         "title": frontmatter["title"],
         "description": description,
         "status": frontmatter.get("status", "draft"),
-        "priority": frontmatter.get("priority", 0),
         "tags": frontmatter.get("tags", []),
         "parent_id": frontmatter.get("parent_id"),
     }
@@ -301,7 +297,7 @@ def merge_content(original_content: str, updates: Dict[str, Any]) -> str:
 
     # Update frontmatter with new values
     for key, value in updates.items():
-        if key in ["type", "title", "status", "priority", "tags", "parent_id"]:
+        if key in ["type", "title", "status", "tags", "parent_id"]:
             if value is not None:
                 # Convert UUID to string for YAML
                 if isinstance(value, UUID):

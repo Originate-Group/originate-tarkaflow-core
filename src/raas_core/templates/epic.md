@@ -2,7 +2,6 @@
 type: epic
 title: "{title}"
 status: {status}
-priority: {priority}
 tags: {tags}
 ---
 

@@ -27,7 +27,6 @@ class RequirementBase(BaseModel):
     content: Optional[str] = None  # Full markdown content
     status: LifecycleStatus = LifecycleStatus.DRAFT
     tags: list[str] = Field(default_factory=list)
-    priority: int = 0
 
 
 class RequirementCreate(BaseModel):
@@ -49,7 +48,6 @@ class RequirementCreate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     status: LifecycleStatus = LifecycleStatus.DRAFT
     tags: list[str] = Field(default_factory=list)
-    priority: int = 0
 
 
 class RequirementUpdate(BaseModel):
@@ -62,7 +60,6 @@ class RequirementUpdate(BaseModel):
     content: Optional[str] = None  # Full markdown content (updates title/description when parsed)
     status: Optional[LifecycleStatus] = None
     tags: Optional[list[str]] = None
-    priority: Optional[int] = None
     # Legacy fields - DEPRECATED and ignored
     title: Optional[str] = Field(None, min_length=1, max_length=200)
 
@@ -79,7 +76,6 @@ class RequirementListItem(BaseModel):
     description: Optional[str] = None
     status: LifecycleStatus
     tags: list[str] = Field(default_factory=list)
-    priority: int
     created_at: datetime
     updated_at: datetime
     created_by: Optional[str] = None

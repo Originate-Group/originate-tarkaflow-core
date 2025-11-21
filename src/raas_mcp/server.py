@@ -518,10 +518,6 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
-                    },
-                    "priority": {
-                        "type": "integer",
-                        "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
                     }
                 },
                 "required": ["type", "content"]
@@ -531,7 +527,7 @@ async def list_tools() -> list[Tool]:
             name="list_requirements",
             description="List and filter requirements with pagination (returns lightweight data without content field). "
                        "Use get_requirement() to fetch full content for specific requirements. "
-                       "Returns: id, type, title, description (500 char max), status, tags, priority, timestamps, "
+                       "Returns: id, type, title, description (500 char max), status, tags, timestamps, "
                        "content_length, child_count. Use this to find requirements by type, status, parent, tags, or search text.",
             inputSchema={
                 "type": "object",
@@ -624,10 +620,6 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
-                    },
-                    "priority": {
-                        "type": "integer",
-                        "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
                     }
                 },
                 "required": ["requirement_id"]
@@ -698,26 +690,6 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["requirement_id", "new_status"]
-            }
-        ),
-        Tool(
-            name="update_requirement_priority",
-            description="Update only the priority of a requirement without modifying content. "
-                       "This is a safe operation that won't risk content loss from truncation. "
-                       "Use this instead of update_requirement when you only need to change priority.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "requirement_id": {
-                        "type": "string",
-                        "description": "UUID of the requirement"
-                    },
-                    "priority": {
-                        "type": "integer",
-                        "description": "New priority value (typically 0-5, where 0 is lowest)"
-                    }
-                },
-                "required": ["requirement_id", "priority"]
             }
         ),
     ]
@@ -1021,18 +993,6 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     text=f"Transitioned '{result['title']}' to status: {new_status}"
                 )]
 
-            elif name == "update_requirement_priority":
-                req_id = arguments["requirement_id"]
-                priority = arguments["priority"]
-                response = await client.patch(f"/requirements/{req_id}", json={"priority": priority})
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated priority for requirement {req_id} to: {priority}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated priority for '{result['title']}' to: {priority}"
-                )]
-
             else:
                 logger.warning(f"Unknown tool requested: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -1132,8 +1092,7 @@ def _format_requirement(req: dict) -> str:
 
     return f"""**{req['title']}** ({req['type']})
 ID: {req['id']}{parent_info}
-Status: {req['status']}
-Priority: {req['priority']}{tags_info}{metadata_info}
+Status: {req['status']}{tags_info}{metadata_info}
 Created: {req['created_at']}
 Updated: {req['updated_at']}
 

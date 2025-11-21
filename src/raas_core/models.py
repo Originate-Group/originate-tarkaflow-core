@@ -304,7 +304,6 @@ class Requirement(Base):
 
     # Metadata
     tags = Column(ARRAY(String), default=[])
-    priority = Column(Integer, default=0)
 
     # Quality tracking
     content_length = Column(Integer, nullable=False, default=0)
