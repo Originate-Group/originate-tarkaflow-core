@@ -77,8 +77,8 @@ def detect_circular_dependency(
             # Found a cycle
             return [requirement_id, dep_id]
 
-        # Get transitive dependencies of dep_id
-        transitive_deps = get_transitive_dependencies(db, dep_id, visited.copy())
+        # Get transitive dependencies of dep_id (start fresh, don't pass visited)
+        transitive_deps = get_transitive_dependencies(db, dep_id, set())
 
         if requirement_id in transitive_deps:
             # Found a cycle
@@ -106,6 +106,7 @@ def get_transitive_dependencies(
 
     Returns:
         Set of all requirement IDs that this requirement depends on (directly or indirectly)
+        NOTE: Does NOT include the starting requirement_id itself
     """
     if visited is None:
         visited = set()
