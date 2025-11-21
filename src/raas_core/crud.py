@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, and_, cast, Text
+from sqlalchemy import or_, and_, cast, case, Text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,9 +11,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from . import models, schemas
 from .markdown_utils import render_template, extract_metadata, merge_content, MarkdownParseError
 from .quality import calculate_quality_score, is_content_length_valid_for_approval, get_length_validation_error
-from .state_machine import validate_transition, StateTransitionError
+from .state_machine import validate_transition, StateTransitionError, STATUS_SORT_ORDER
 
 logger = logging.getLogger("raas-api.crud")
+
+
+def _status_sort_expression():
+    """Build SQLAlchemy CASE expression for status-based sorting.
+
+    Returns a CASE expression that maps status to sort order,
+    with in_progress first and draft last.
+    """
+    return case(
+        *[(models.Requirement.status == status, order)
+          for status, order in STATUS_SORT_ORDER.items()],
+        else_=99
+    )
 
 
 def create_requirement(
@@ -301,8 +314,9 @@ def get_requirements(
     total = query.count()
 
     # Apply pagination and ordering
+    # Order by status priority (in_progress first, draft last), then by created_at
     requirements = (
-        query.order_by(models.Requirement.created_at.desc())
+        query.order_by(_status_sort_expression(), models.Requirement.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -526,7 +540,7 @@ def get_requirement_children(
     return (
         db.query(models.Requirement)
         .filter(models.Requirement.parent_id == parent_id)
-        .order_by(models.Requirement.created_at)
+        .order_by(_status_sort_expression(), models.Requirement.created_at.desc())
         .all()
     )
 

@@ -149,3 +149,17 @@ def get_allowed_transitions(current_status: LifecycleStatus) -> list[LifecycleSt
     all_transitions = TRANSITION_MATRIX.get(current_status, [])
     # Filter out the no-op transition (same status)
     return [s for s in all_transitions if s != current_status]
+
+
+# Status sort order for list queries
+# Lower number = higher priority (shown first)
+# Reflects workflow priority: active work first, backlog last
+STATUS_SORT_ORDER: dict[LifecycleStatus, int] = {
+    LifecycleStatus.IN_PROGRESS: 1,   # Actively working - highest priority
+    LifecycleStatus.IMPLEMENTED: 2,   # Needs validation
+    LifecycleStatus.VALIDATED: 3,     # Ready for deployment
+    LifecycleStatus.APPROVED: 4,      # Ready to start
+    LifecycleStatus.REVIEW: 5,        # Needs review decision
+    LifecycleStatus.DRAFT: 6,         # Backlog - lowest priority
+    LifecycleStatus.DEPLOYED: 7,      # Done (usually excluded from lists)
+}
