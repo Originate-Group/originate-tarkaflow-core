@@ -6,64 +6,64 @@ priority: {priority}
 tags: {tags}
 ---
 
-<!--
-=============================================================================
-EPIC WRITING GUIDELINES
-=============================================================================
-
-An EPIC represents a large strategic initiative that delivers significant business value.
-Think: "What major capability or outcome are we building?"
-
-FOCUS ON:
-✅ Strategic vision and business goals
-✅ High-level scope and boundaries
-✅ Expected business outcomes and value
-✅ Major stakeholder needs
-✅ Success metrics at the portfolio level
-
-AVOID:
-❌ Implementation details or technology choices
-❌ Code examples or technical specifications
-❌ Detailed user stories (those belong in Features)
-❌ Step-by-step procedures
-
-GOOD EPIC EXAMPLE:
-"Build a collaborative, AI-native requirements management platform that serves as
-a single source of truth for software teams using multiple AI assistants. Success
-measured by: 95% reduction in requirements drift across AI tools, 3x faster
-requirements creation, SOC2 compliance achieved."
-
-BAD EPIC EXAMPLE:
-"Create a FastAPI backend with PostgreSQL database using SQLAlchemy ORM.
-Implement JWT authentication with Keycloak. Set up Docker containers with
-docker-compose for deployment."
-
-KEY QUESTIONS TO ASK:
-- What business problem does this solve?
-- Who are the primary stakeholders?
-- How will we measure success?
-- What are we explicitly NOT doing?
--->
-
 # Epic: {title}
 
 ## Vision
 
 {description}
 
+<!--
+WRITE 2-4 sentences answering:
+- What business problem does this solve?
+- Who benefits and how?
+- What does success look like from a user/business perspective?
+
+DO NOT INCLUDE: technology choices, database designs, API structures,
+deployment approaches, or any implementation details. Those decisions
+belong to Code Claude during implementation.
+-->
+
 ## Success Criteria
 
-- [ ] Define success criteria
+<!--
+List measurable BUSINESS outcomes, not technical metrics.
 
-## Timeline
+GOOD: "Users can create requirements 3x faster than current process"
+GOOD: "Zero requirements drift between AI tools over 30 days"
+GOOD: "SOC2 compliance audit passed"
 
-- **Target Start**: TBD
-- **Target Completion**: TBD
+BAD: "API response time under 100ms"
+BAD: "Database supports 10,000 concurrent connections"
+BAD: "Docker containers deploy in under 5 minutes"
+-->
 
-## Dependencies
+- [ ] [Business outcome 1]
+- [ ] [Business outcome 2]
+- [ ] [Business outcome 3]
 
-- List dependencies here
+## Scope Boundaries
 
-## Notes
+**In Scope**: [What capabilities this epic delivers]
 
-Additional context, constraints, or considerations.
+**Out of Scope**: [What this epic explicitly does NOT include]
+
+<!--
+Define boundaries in terms of CAPABILITIES, not implementation.
+
+GOOD: "In Scope: Multi-user collaboration on requirements"
+BAD: "In Scope: WebSocket real-time sync with Redis pub/sub"
+-->
+
+## Business Dependencies
+
+<!--
+List only BUSINESS prerequisites - things that must be true or decided
+before this work makes sense. Do NOT list technical dependencies like
+databases, frameworks, or infrastructure choices.
+
+GOOD: "Security policy must be approved before handling PII"
+GOOD: "Pricing model must be finalized before building tier features"
+
+BAD: "PostgreSQL database must be provisioned"
+BAD: "Keycloak must be configured with realms"
+-->

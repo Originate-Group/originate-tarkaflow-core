@@ -7,142 +7,79 @@ priority: {priority}
 tags: {tags}
 ---
 
-<!--
-=============================================================================
-COMPONENT WRITING GUIDELINES
-=============================================================================
-
-A COMPONENT represents a discrete, deployable unit of functionality.
-Think: "What gets built and shipped as a unit?"
-
-Typically: 1 repository, 1 service, 1 agent, or 1 major subsystem.
-
-FOCUS ON:
-✅ What this component does and why it exists
-✅ Integration context (what it connects to)
-✅ Security and privacy considerations
-✅ Phased delivery approach (MVP → Enhancement → Future)
-
-AVOID:
-❌ Implementation details (save for Features/Requirements)
-❌ Code examples or technical specifications
-❌ Detailed designs or mockups
-❌ Step-by-step procedures
-
-INTEGRATION CONTEXT:
-Every component should state:
-- Primary data sources (where data comes from)
-- External dependencies (what systems it needs)
-- Integration patterns (sync/async, real-time/batch)
-- Fallback behavior (what happens if dependencies fail)
-
-SECURITY & PRIVACY:
-Address if applicable:
-- Data classification (PII, financial, confidential)
-- Security controls needed (encryption, audit logging)
-- Compliance requirements (GDPR, SOC2, etc.)
-- Privacy impact assessment
-
-TAGGING FOR DISCOVERABILITY:
-Use tags to enable cross-cutting queries:
-- integration:asana, integration:xero, integration:email
-- data:pii, data:financial, data:confidential
-- security:encryption-required, security:audit-logging
-- compliance:gdpr, compliance:soc2
-- domain:sales, domain:finance, foundation, automation
-- priority:p0, quick-win, high-roi
-
-EXAMPLE:
-"Lead Scoring Engine analyzes prospect behavior and assigns scores based on
-engagement patterns. Integrates with CRM via API sync, processes email events
-in real-time, and stores scores in PostgreSQL. Handles PII requiring encryption
-and GDPR compliance. MVP: basic scoring algorithm. Enhancement: ML-based scoring."
--->
-
 # Component: {title}
 
-## Overview
+## Purpose
 
-{2-3 sentences: What this component does, why it exists, what value it delivers.}
+{description}
 
-## Core Functionality
+<!--
+2-3 sentences: What this component does and why it exists.
+Focus on the CAPABILITY it provides, not HOW it's built.
 
-What key capabilities does this component provide?
+GOOD: "Manages lead scoring to help sales prioritize prospects by engagement level"
+BAD: "PostgreSQL-backed service using Redis for caching that exposes REST APIs"
+-->
+
+## Capabilities
+
+<!--
+List what users/systems can DO with this component.
+Each capability should be testable without knowing implementation.
+
+GOOD: "Score leads based on engagement patterns"
+GOOD: "Query historical scores for trend analysis"
+
+BAD: "Expose GET /leads/:id/score endpoint"
+BAD: "Store scores in leads.score_history table"
+-->
 
 - [Capability 1]
 - [Capability 2]
 - [Capability 3]
 
-## Integration Context
+## Integrations
 
-**Data Sources**:
-- [Where does data come from? Databases, APIs, files, etc.]
+<!--
+List WHICH systems this component exchanges data with.
+Do NOT specify HOW (webhooks vs polling, sync vs async, etc.)
 
-**External Dependencies**:
-- [What external systems/services does this require? Include auth needs.]
+GOOD: "Exchanges data with: CRM system, Email platform, Analytics dashboard"
+BAD: "Polls CRM API every 5 minutes, pushes to Analytics via webhook"
+-->
 
-**Integration Patterns**:
-- [How does data flow? Sync frequency? Real-time vs batch? Webhook vs polling?]
+**Connects To**: [List external systems by name]
 
-**Fallback Behavior**:
-- [What happens if dependencies are unavailable? How does it degrade?]
+**Data Ownership**: [Source of truth, or mirrors external data?]
 
-**Data Ownership**:
-- [Is this component the source of truth, or does it mirror external data?]
+## Data & Privacy
 
-## Security & Privacy
+<!--
+Describe WHAT data is handled and WHAT protection it needs.
+Do NOT specify HOW to implement that protection.
 
-**Data Handled**: [PII, financial, confidential, public - what types?]
+GOOD: "Handles PII (names, emails) requiring encryption at rest"
+BAD: "Use Fernet encryption with AES-256 for PII fields"
+-->
 
-**Security Controls**: [Encryption, audit logging, access control, MFA - what's required?]
+**Data Classification**: [PII, financial, confidential, public]
 
-**Compliance**: [GDPR, SOC2, PCI-DSS, HIPAA - what applies?]
-
-**Privacy Impact**: [Does it collect/process personal data? What are implications?]
-
-**Attack Surface**: [What are the main security risks to consider?]
-
-## Implementation Phases
-
-**Phase 1 (MVP)**:
-- [Minimum viable functionality that delivers value]
-- [Keep it simple - manual processes where acceptable]
-
-**Phase 2 (Enhancement)**:
-- [Improvements that make it better/faster/more reliable]
-- [Build on MVP success]
-
-**Phase 3 (Future)**:
-- [Nice-to-haves that aren't time-critical]
-- [Advanced features based on user feedback]
+**Compliance Requirements**: [GDPR, SOC2, etc. - if applicable]
 
 ## Success Criteria
 
-**Technical Success**:
-- [ ] [Performance metrics - response times, throughput, uptime]
-- [ ] [Reliability metrics - error rates, availability]
-- [ ] [Integration health - sync success, data quality]
+<!--
+Business outcomes only. Code Claude will determine technical metrics.
 
-**Business Success**:
-- [ ] [User outcomes - time saved, efficiency gained]
-- [ ] [Adoption metrics - active users, feature usage]
-- [ ] [ROI metrics - cost vs value]
+GOOD: "Sales team can identify top 10 prospects in under 30 seconds"
+BAD: "API p95 latency under 200ms"
+-->
 
-## Dependencies
+- [ ] [Business outcome 1]
+- [ ] [Business outcome 2]
 
-**Requires** (blocks this component):
-- [Components/systems that must exist first]
+## Scope Boundaries
 
-**Enables** (this component blocks):
-- [Components/capabilities that depend on this]
+**In Scope**: [What this component handles]
 
-**Integrates With** (peers):
-- [Components this works alongside]
-
-## Notes
-
-**Constraints**: [Limitations or boundaries to be aware of]
-
-**Future Extensibility**: [How this might evolve]
-
-**Key Decisions**: [Important choices made and why]
+**Out of Scope**: [What belongs elsewhere]

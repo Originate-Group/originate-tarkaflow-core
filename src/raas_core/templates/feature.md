@@ -7,128 +7,62 @@ priority: {priority}
 tags: {tags}
 ---
 
-<!--
-=============================================================================
-FEATURE WRITING GUIDELINES
-=============================================================================
-
-A FEATURE represents a user-facing capability that delivers specific value.
-Think: "What can users do? What problem does this solve for them?"
-
-FOCUS ON:
-✅ User value and benefits (the "why")
-✅ User stories with clear actors
-✅ Acceptance criteria from user perspective
-✅ End-to-end workflows and interactions
-✅ Business rules and constraints
-
-AVOID:
-❌ Implementation steps or algorithms
-❌ Code examples or database schemas
-❌ API endpoint definitions or HTTP methods
-❌ Technology-specific details (libraries, frameworks)
-❌ "How" to build it (save for Requirements)
-
-USER STORY FORMAT:
-As a [role]
-I want [capability]
-So that [benefit]
-
-OUTCOME-BASED DESCRIPTIONS:
-✅ GOOD: "System validates that requirements follow proper parent-child
-         relationships and prevents orphaned items"
-❌ BAD: "Add CHECK constraint: (type='epic' AND parent_id IS NULL) OR
-         (type!='epic' AND parent_id IS NOT NULL)"
-
-✅ GOOD: "Audit trail captures who changed what and when, supporting
-         compliance requirements and debugging"
-❌ BAD: "Create audit_log table with columns: id, user_id, action,
-         old_value, new_value, timestamp. Add trigger on UPDATE."
-
-DATA MODELS - Describe Structure, Not Code:
-✅ GOOD: "Audit record includes: action type, changed field, old value,
-         new value, timestamp, user who made change"
-❌ BAD: "class AuditRecord(BaseModel):
-         id: UUID = Field(default_factory=uuid4)
-         action: str"
-
-GOOD FEATURE EXAMPLE:
-"As a product manager, I want to organize requirements in a 4-level hierarchy
-so that I can manage large projects with clear relationships from strategic
-initiatives down to implementation details. The system must enforce parent-child
-relationships, prevent orphaned requirements, and show me the complete tree
-structure with visual hierarchy."
-
-BAD FEATURE EXAMPLE:
-"Implement 4-level hierarchy using self-referential foreign key in PostgreSQL:
-parent_id UUID REFERENCES requirements(id) ON DELETE CASCADE
-Add validation: if type='epic' then parent_id IS NULL
-Use recursive CTE for tree queries: WITH RECURSIVE tree AS..."
-
-KEY QUESTIONS TO ASK:
-- Who is the user and what do they need?
-- What value does this provide to them?
-- How will users interact with this?
-- What defines success from the user's perspective?
-- Could you explain this to a non-technical stakeholder?
--->
-
 # Feature: {title}
 
-## Overview
-
-{2-3 sentences describing what this feature enables users to do and why it matters. Focus on user value, not technical implementation.}
-
-## User Stories
+## User Story
 
 **As a** [type of user]
 **I want** [goal/desire]
 **So that** [benefit/value]
 
-**As a** [another user type if applicable]
-**I want** [goal/desire]
-**So that** [benefit/value]
+<!--
+Focus on WHO benefits and WHAT they can do.
+Do NOT describe HOW the system implements it.
+
+GOOD: "As a product manager, I want to organize requirements hierarchically
+      so that I can manage complex projects with clear relationships"
+
+BAD: "As a user, I want the system to use recursive CTEs to query the
+     parent_id foreign key so that hierarchical data is retrieved efficiently"
+-->
+
+## Overview
+
+{description}
+
+<!--
+2-3 sentences: What this feature enables and why it matters.
+Describe the CAPABILITY from the user's perspective.
+-->
 
 ## Acceptance Criteria
 
-What must be true for this feature to be considered complete? Write from the user's perspective.
+<!--
+What must be TRUE for this feature to be complete?
+Write from the USER's perspective - what they can observe/verify.
 
-- [ ] [User-observable behavior or outcome]
-- [ ] [Business rule or constraint that must be enforced]
-- [ ] [Edge case or error handling requirement]
-- [ ] [Performance or quality requirement if critical]
+GOOD: "User sees all child requirements when viewing a parent"
+GOOD: "System prevents creating orphaned requirements"
+
+BAD: "API returns 400 if parent_id is invalid UUID"
+BAD: "Database constraint enforces referential integrity"
+-->
+
+- [ ] [User-observable outcome 1]
+- [ ] [User-observable outcome 2]
+- [ ] [Business rule that must be enforced]
 
 ## Success Criteria
 
-How will we know this feature is working correctly and delivering value?
+<!--
+How do we know this delivers value? Business outcomes only.
+-->
 
-**User Success**:
 - [ ] [User can accomplish their goal]
-- [ ] [User experience is intuitive/fast/reliable]
-- [ ] [Common workflows are smooth]
-
-**Business Success**:
 - [ ] [Measurable business outcome]
-- [ ] [Adoption or usage metric]
-- [ ] [Value delivered matches expectation]
 
-## Dependencies
+## Scope Boundaries
 
-**Requires** (must exist before this feature):
-- [Other features or capabilities this depends on]
+**In Scope**: [What this feature delivers]
 
-**Enables** (this feature blocks):
-- [Features that depend on this one]
-
-## Notes
-
-Any additional context, constraints, or considerations:
-
-**Constraints**:
-- [Technical or business limitations to be aware of]
-
-**Future Enhancements**:
-- [Ideas for future iterations, deliberately excluded from this feature]
-
-**Known Trade-offs**:
-- [Decisions made, alternatives considered]
+**Out of Scope**: [Explicitly excluded - may be future work]
