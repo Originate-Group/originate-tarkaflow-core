@@ -27,6 +27,7 @@ class RequirementBase(BaseModel):
     content: Optional[str] = None  # Full markdown content
     status: LifecycleStatus = LifecycleStatus.DRAFT
     tags: list[str] = Field(default_factory=list)
+    depends_on: list[UUID] = Field(default_factory=list, description="List of requirement IDs this depends on")
 
 
 class RequirementCreate(BaseModel):
@@ -60,6 +61,7 @@ class RequirementUpdate(BaseModel):
     content: Optional[str] = None  # Full markdown content (updates title/description when parsed)
     status: Optional[LifecycleStatus] = None
     tags: Optional[list[str]] = None
+    depends_on: Optional[list[UUID]] = None  # Update dependencies
     # Legacy fields - DEPRECATED and ignored
     title: Optional[str] = Field(None, min_length=1, max_length=200)
 
@@ -76,6 +78,7 @@ class RequirementListItem(BaseModel):
     description: Optional[str] = None
     status: LifecycleStatus
     tags: list[str] = Field(default_factory=list)
+    depends_on: list[UUID] = Field(default_factory=list, description="List of requirement IDs this depends on")
     created_at: datetime
     updated_at: datetime
     created_by: Optional[str] = None

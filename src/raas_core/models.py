@@ -16,6 +16,7 @@ from sqlalchemy import (
     ARRAY,
     Boolean,
     UniqueConstraint,
+    Table,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -23,6 +24,19 @@ from sqlalchemy.ext.declarative import declarative_base
 
 # Base class for all models
 Base = declarative_base()
+
+
+# Association table for requirement dependencies (many-to-many)
+requirement_dependencies = Table(
+    'requirement_dependencies',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('requirement_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('depends_on_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint('requirement_id', 'depends_on_id', name='unique_requirement_dependency'),
+    CheckConstraint('requirement_id != depends_on_id', name='no_self_dependency'),
+)
 
 
 class RequirementType(str, enum.Enum):
@@ -332,6 +346,17 @@ class Requirement(Base):
     created_by_user = relationship("User", foreign_keys=[created_by_user_id], back_populates="created_requirements")
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id], back_populates="updated_requirements")
 
+    # Dependency relationships (many-to-many)
+    # Forward: What this requirement depends on
+    dependencies = relationship(
+        "Requirement",
+        secondary=requirement_dependencies,
+        primaryjoin=id == requirement_dependencies.c.requirement_id,
+        secondaryjoin=id == requirement_dependencies.c.depends_on_id,
+        foreign_keys=[requirement_dependencies.c.requirement_id, requirement_dependencies.c.depends_on_id],
+        backref="dependents",  # Reverse: What depends on this requirement
+    )
+
     # Constraints
     __table_args__ = (
         CheckConstraint(
@@ -345,6 +370,11 @@ class Requirement(Base):
     def child_count(self) -> int:
         """Count the number of direct children."""
         return len(self.children) if self.children else 0
+
+    @property
+    def depends_on(self) -> list:
+        """Get list of dependency IDs."""
+        return [dep.id for dep in self.dependencies] if self.dependencies else []
 
     def __repr__(self) -> str:
         return f"<Requirement {self.type.value}: {self.title}>"

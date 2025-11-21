@@ -230,7 +230,7 @@ def extract_metadata(content: str) -> Dict[str, Any]:
         content: The markdown content to parse
 
     Returns:
-        Dictionary containing: type, title, description, status, tags, parent_id
+        Dictionary containing: type, title, description, status, tags, parent_id, depends_on
 
     Raises:
         MarkdownParseError: If content is invalid
@@ -262,6 +262,7 @@ def extract_metadata(content: str) -> Dict[str, Any]:
         "status": frontmatter.get("status", "draft"),
         "tags": frontmatter.get("tags", []),
         "parent_id": frontmatter.get("parent_id"),
+        "depends_on": frontmatter.get("depends_on", []),
     }
 
     # Convert parent_id string to UUID if present and not null
@@ -272,6 +273,18 @@ def extract_metadata(content: str) -> Dict[str, Any]:
             raise MarkdownParseError(f"Invalid parent_id UUID: {e}")
     else:
         metadata["parent_id"] = None
+
+    # Convert depends_on strings to UUIDs
+    depends_on_uuids = []
+    if metadata["depends_on"]:
+        if not isinstance(metadata["depends_on"], list):
+            raise MarkdownParseError("depends_on must be a list of requirement IDs")
+        for dep_id in metadata["depends_on"]:
+            try:
+                depends_on_uuids.append(UUID(str(dep_id)))
+            except (ValueError, AttributeError) as e:
+                raise MarkdownParseError(f"Invalid dependency UUID '{dep_id}': {e}")
+    metadata["depends_on"] = depends_on_uuids
 
     return metadata
 
@@ -297,11 +310,14 @@ def merge_content(original_content: str, updates: Dict[str, Any]) -> str:
 
     # Update frontmatter with new values
     for key, value in updates.items():
-        if key in ["type", "title", "status", "tags", "parent_id"]:
+        if key in ["type", "title", "status", "tags", "parent_id", "depends_on"]:
             if value is not None:
                 # Convert UUID to string for YAML
                 if isinstance(value, UUID):
                     frontmatter[key] = str(value)
+                # Convert list of UUIDs to list of strings
+                elif isinstance(value, list) and value and isinstance(value[0], UUID):
+                    frontmatter[key] = [str(uuid) for uuid in value]
                 # Convert enums to their string values
                 elif hasattr(value, 'value'):
                     frontmatter[key] = value.value

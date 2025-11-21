@@ -12,6 +12,11 @@ from . import models, schemas
 from .markdown_utils import render_template, extract_metadata, merge_content, MarkdownParseError
 from .quality import calculate_quality_score, is_content_length_valid_for_approval, get_length_validation_error
 from .state_machine import validate_transition, StateTransitionError, STATUS_SORT_ORDER
+from .dependencies import (
+    validate_dependencies,
+    can_transition_to_deployed,
+    CircularDependencyError,
+)
 
 logger = logging.getLogger("raas-api.crud")
 
@@ -90,6 +95,7 @@ def create_requirement(
     status = metadata["status"]
     tags = metadata["tags"]
     parent_id = metadata["parent_id"]
+    depends_on = metadata.get("depends_on", [])
 
     # Determine project_id based on requirement type
     resolved_project_id = None
@@ -166,6 +172,34 @@ def create_requirement(
             updated_by_user_id=user_id,
         )
         db.add(db_requirement)
+        db.flush()  # Flush to get the ID before validating dependencies
+
+        # Validate and store dependencies
+        if depends_on:
+            is_valid, error_msg, warnings = validate_dependencies(
+                db, db_requirement.id, depends_on, resolved_project_id
+            )
+            if not is_valid:
+                logger.warning(f"Dependency validation failed: {error_msg}")
+                db.rollback()
+                raise ValueError(f"Invalid dependencies: {error_msg}")
+
+            # Log priority inversion warnings
+            for warning in warnings:
+                logger.warning(
+                    f"Priority inversion: P{warning['requirement_priority']} requirement "
+                    f"depends on P{warning['dependency_priority']} requirement"
+                )
+
+            # Store dependencies
+            for dep_id in depends_on:
+                db.execute(
+                    models.requirement_dependencies.insert().values(
+                        requirement_id=db_requirement.id,
+                        depends_on_id=dep_id
+                    )
+                )
+
         db.commit()
         db.refresh(db_requirement)
         logger.debug(f"Database: Created requirement {db_requirement.id} in org {organization_id}")
@@ -249,6 +283,8 @@ def get_requirements(
     organization_ids: Optional[list[UUID]] = None,
     project_id: Optional[UUID] = None,
     include_deployed: bool = False,
+    ready_to_implement: Optional[bool] = None,
+    blocked_by: Optional[UUID] = None,
 ) -> tuple[list[models.Requirement], int]:
     """
     Get requirements with optional filtering and pagination.
@@ -266,6 +302,8 @@ def get_requirements(
         organization_ids: Filter by organization IDs (for multi-user access control)
         project_id: Filter by project ID
         include_deployed: Include deployed items (default: False, deployed items excluded)
+        ready_to_implement: Filter for requirements with all dependencies deployed (True) or with unmet dependencies (False)
+        blocked_by: Filter for requirements that depend on the specified requirement ID
 
     Returns:
         Tuple of (requirements list, total count)
@@ -310,6 +348,13 @@ def get_requirements(
     if not include_deployed:
         query = query.filter(models.Requirement.status != models.LifecycleStatus.DEPLOYED)
 
+    # Filter by blocked_by (requirements that depend on a specific requirement)
+    if blocked_by:
+        query = query.join(
+            models.requirement_dependencies,
+            models.Requirement.id == models.requirement_dependencies.c.requirement_id
+        ).filter(models.requirement_dependencies.c.depends_on_id == blocked_by)
+
     # Get total count
     total = query.count()
 
@@ -321,6 +366,31 @@ def get_requirements(
         .limit(limit)
         .all()
     )
+
+    # Post-filter for ready_to_implement (requires checking each requirement's dependencies)
+    # This is less efficient but necessary as it requires checking related records
+    if ready_to_implement is not None:
+        filtered_requirements = []
+        for req in requirements:
+            # Get dependencies for this requirement
+            deps = (
+                db.query(models.Requirement)
+                .join(
+                    models.requirement_dependencies,
+                    models.Requirement.id == models.requirement_dependencies.c.depends_on_id
+                )
+                .filter(models.requirement_dependencies.c.requirement_id == req.id)
+                .all()
+            )
+
+            # Check if ready to implement (all dependencies deployed or no dependencies)
+            is_ready = not deps or all(dep.status == models.LifecycleStatus.DEPLOYED for dep in deps)
+
+            if ready_to_implement == is_ready:
+                filtered_requirements.append(req)
+
+        requirements = filtered_requirements
+        # Note: total count is not adjusted for ready_to_implement filter as it's applied post-pagination
 
     return requirements, total
 
@@ -360,14 +430,26 @@ def update_requirement(
     # Track changes for history
     changes = []
     update_data = requirement_update.model_dump(exclude_unset=True)
+    new_dependencies = None  # Track dependency updates
 
     # If markdown content is provided, parse it and extract metadata
     if "content" in update_data and update_data["content"]:
         try:
             metadata = extract_metadata(update_data["content"])
 
+            # Extract dependencies from metadata
+            if "depends_on" in metadata:
+                new_dependencies = metadata["depends_on"]
+
             # Validate status transition if status is changing
             if "status" in metadata and metadata["status"] != db_requirement.status:
+                # Check if transitioning to deployed and dependencies are met
+                if metadata["status"] == models.LifecycleStatus.DEPLOYED:
+                    can_deploy, error_msg = can_transition_to_deployed(db, requirement_id)
+                    if not can_deploy:
+                        logger.warning(f"Deployment blocked: {error_msg}")
+                        raise ValueError(error_msg)
+
                 try:
                     validate_transition(db_requirement.status, metadata["status"])
                 except StateTransitionError as e:
@@ -408,8 +490,19 @@ def update_requirement(
             raise ValueError(f"Invalid markdown content: {e}")
     else:
         # Update individual fields and regenerate/update markdown
+        # Extract dependencies if provided directly (not through content)
+        if "depends_on" in update_data:
+            new_dependencies = update_data["depends_on"]
+
         # Validate status transition BEFORE making any changes
         if "status" in update_data and update_data["status"] != db_requirement.status:
+            # Check if transitioning to deployed and dependencies are met
+            if update_data["status"] == models.LifecycleStatus.DEPLOYED:
+                can_deploy, error_msg = can_transition_to_deployed(db, requirement_id)
+                if not can_deploy:
+                    logger.warning(f"Deployment blocked: {error_msg}")
+                    raise ValueError(error_msg)
+
             try:
                 validate_transition(db_requirement.status, update_data["status"])
             except StateTransitionError as e:
@@ -429,7 +522,7 @@ def update_requirement(
 
         fields_to_update = {}
         for field, value in update_data.items():
-            if field == "content":
+            if field in ["content", "depends_on"]:  # Skip content and depends_on (handled separately)
                 continue
             old_value = getattr(db_requirement, field)
             if old_value != value:
@@ -467,6 +560,42 @@ def update_requirement(
             logger.warning(f"Blocked status transition due to content length: {error_msg}")
             raise ValueError(error_msg)
 
+    # Update dependencies if provided
+    if new_dependencies is not None:
+        # Validate dependencies
+        if new_dependencies:  # Only validate if there are dependencies
+            is_valid, error_msg, warnings = validate_dependencies(
+                db, requirement_id, new_dependencies, db_requirement.project_id
+            )
+            if not is_valid:
+                logger.warning(f"Dependency validation failed: {error_msg}")
+                raise ValueError(f"Invalid dependencies: {error_msg}")
+
+            # Log priority inversion warnings
+            for warning in warnings:
+                logger.warning(
+                    f"Priority inversion: P{warning['requirement_priority']} requirement "
+                    f"depends on P{warning['dependency_priority']} requirement"
+                )
+
+        # Clear existing dependencies
+        db.execute(
+            models.requirement_dependencies.delete().where(
+                models.requirement_dependencies.c.requirement_id == requirement_id
+            )
+        )
+
+        # Add new dependencies
+        for dep_id in new_dependencies:
+            db.execute(
+                models.requirement_dependencies.insert().values(
+                    requirement_id=requirement_id,
+                    depends_on_id=dep_id
+                )
+            )
+
+        changes.append(("dependencies", "dependencies updated", "dependencies updated"))
+
     if changes:
         db.commit()
         db.refresh(db_requirement)
@@ -495,16 +624,42 @@ def delete_requirement(db: Session, requirement_id: UUID) -> bool:
     """
     Delete a requirement and all its children recursively.
 
+    Checks for dependents and either fails with error or clears dependencies.
+
     Args:
         db: Database session
         requirement_id: Requirement UUID
 
     Returns:
         True if deleted, False if not found
+
+    Raises:
+        ValueError: If other requirements depend on this one
     """
     db_requirement = get_requirement(db, requirement_id)
     if not db_requirement:
         return False
+
+    # Check if other requirements depend on this one
+    dependents = (
+        db.query(models.Requirement)
+        .join(
+            models.requirement_dependencies,
+            models.Requirement.id == models.requirement_dependencies.c.requirement_id
+        )
+        .filter(models.requirement_dependencies.c.depends_on_id == requirement_id)
+        .all()
+    )
+
+    if dependents:
+        # Block deletion with clear error message
+        dependent_list = ", ".join(
+            f"{dep.human_readable_id or str(dep.id)}" for dep in dependents
+        )
+        raise ValueError(
+            f"Cannot delete requirement: the following requirements depend on it: {dependent_list}. "
+            f"Remove these dependencies first or delete the dependent requirements."
+        )
 
     # Recursively delete all children first
     children = get_requirement_children(db, requirement_id)
@@ -519,6 +674,7 @@ def delete_requirement(db: Session, requirement_id: UUID) -> bool:
         old_value=f"{db_requirement.type.value}: {db_requirement.title}",
     )
 
+    # Dependencies will be automatically deleted by CASCADE constraint
     db.delete(db_requirement)
     db.commit()
     return True
