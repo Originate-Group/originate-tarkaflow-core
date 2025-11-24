@@ -111,7 +111,10 @@ def update_organization(
 
     try:
         organization = crud.update_organization(
-            db, organization_id, organization_update
+            db,
+            organization_id,
+            name=organization_update.name,
+            settings=organization_update.settings,
         )
         return organization
     except Exception as e:
