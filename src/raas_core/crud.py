@@ -1746,3 +1746,189 @@ status: draft  # draft, active, deprecated
 - [Optional: External documentation, standards, or policies]
 """
     return template
+
+
+def update_guardrail(
+    db: Session,
+    guardrail_id: str,
+    content: str,
+    user_id: UUID,
+) -> models.Guardrail:
+    """
+    Update an existing guardrail.
+
+    Args:
+        db: Database session
+        guardrail_id: UUID or human-readable ID
+        content: Full markdown content with YAML frontmatter
+        user_id: User UUID (updater)
+
+    Returns:
+        Updated guardrail instance
+
+    Raises:
+        ValueError: If guardrail not found or content is invalid
+    """
+    # Get existing guardrail
+    db_guardrail = get_guardrail(db=db, guardrail_id=guardrail_id)
+    if not db_guardrail:
+        raise ValueError(f"Guardrail {guardrail_id} not found")
+
+    # Parse and validate new markdown content
+    try:
+        from .markdown_utils import parse_markdown
+        parsed = parse_markdown(content)
+        frontmatter = parsed["frontmatter"]
+        body = parsed["body"]
+    except MarkdownParseError as e:
+        logger.warning(f"Invalid markdown content for guardrail update: {e}")
+        raise ValueError(
+            f"Invalid markdown content: {e}\n\n"
+            f"Use get_guardrail_template to obtain the proper template format."
+        )
+
+    # Validate type is 'guardrail'
+    if frontmatter.get("type") != "guardrail":
+        raise ValueError(
+            f"Invalid type in content frontmatter: expected 'guardrail', got '{frontmatter.get('type')}'"
+        )
+
+    # Extract all fields from validated markdown frontmatter
+    try:
+        title = frontmatter["title"]
+        category = frontmatter["category"]
+        enforcement_level = frontmatter["enforcement_level"]
+        applies_to = frontmatter["applies_to"]
+    except KeyError as e:
+        raise ValueError(f"Missing required field in frontmatter: {e}")
+
+    description = frontmatter.get("description", "")
+    status = frontmatter.get("status", "draft")
+
+    # Validate category
+    try:
+        category_enum = models.GuardrailCategory(category)
+    except ValueError:
+        valid_categories = [c.value for c in models.GuardrailCategory]
+        raise ValueError(
+            f"Invalid category '{category}'. Must be one of: {', '.join(valid_categories)}"
+        )
+
+    # Validate enforcement_level
+    try:
+        enforcement_enum = models.EnforcementLevel(enforcement_level)
+    except ValueError:
+        valid_levels = [l.value for l in models.EnforcementLevel]
+        raise ValueError(
+            f"Invalid enforcement_level '{enforcement_level}'. Must be one of: {', '.join(valid_levels)}"
+        )
+
+    # Validate status
+    try:
+        status_enum = models.GuardrailStatus(status)
+    except ValueError:
+        valid_statuses = [s.value for s in models.GuardrailStatus]
+        raise ValueError(
+            f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}"
+        )
+
+    # Validate applies_to
+    if not applies_to or not isinstance(applies_to, list):
+        raise ValueError("applies_to must be a non-empty list of requirement types")
+
+    valid_requirement_types = {rt.value for rt in models.RequirementType}
+    invalid_types = set(applies_to) - valid_requirement_types
+    if invalid_types:
+        raise ValueError(
+            f"Invalid requirement types in applies_to: {', '.join(invalid_types)}. "
+            f"Must be one of: {', '.join(valid_requirement_types)}"
+        )
+
+    # Auto-extract description if not provided
+    if not description:
+        content_body = content.split("---", 2)[2] if content.count("---") >= 2 else ""
+        lines = [line.strip() for line in content_body.strip().split("\n") if line.strip() and not line.startswith("#")]
+        description = lines[0][:500] if lines else ""
+
+    # Update guardrail fields
+    db_guardrail.title = title
+    db_guardrail.category = category_enum
+    db_guardrail.enforcement_level = enforcement_enum
+    db_guardrail.applies_to = applies_to
+    db_guardrail.status = status_enum
+    db_guardrail.content = content
+    db_guardrail.description = description
+    db_guardrail.updated_by_user_id = user_id
+
+    db.commit()
+    db.refresh(db_guardrail)
+
+    logger.info(f"Updated guardrail {db_guardrail.human_readable_id} by user {user_id}")
+    return db_guardrail
+
+
+def list_guardrails(
+    db: Session,
+    organization_id: Optional[UUID] = None,
+    category: Optional[str] = None,
+    enforcement_level: Optional[str] = None,
+    applies_to: Optional[str] = None,
+    status: Optional[str] = "active",
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[models.Guardrail], int]:
+    """
+    List guardrails with filtering and pagination.
+
+    Args:
+        db: Database session
+        organization_id: Filter by organization (optional)
+        category: Filter by category (optional)
+        enforcement_level: Filter by enforcement level (optional)
+        applies_to: Filter by requirement type applicability (optional)
+        status: Filter by status (defaults to 'active', use None for all statuses)
+        search: Search keyword for title/content (optional)
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return
+
+    Returns:
+        Tuple of (guardrails list, total count)
+    """
+    query = db.query(models.Guardrail)
+
+    # Apply filters
+    if organization_id:
+        query = query.filter(models.Guardrail.organization_id == organization_id)
+
+    if category:
+        query = query.filter(models.Guardrail.category == category)
+
+    if enforcement_level:
+        query = query.filter(models.Guardrail.enforcement_level == enforcement_level)
+
+    if applies_to:
+        # Filter where applies_to array contains the specified type
+        query = query.filter(models.Guardrail.applies_to.contains([applies_to]))
+
+    # Status filter (defaults to active only per REQ-040)
+    if status is not None:
+        query = query.filter(models.Guardrail.status == status)
+
+    # Search filter
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Guardrail.title.ilike(search_pattern),
+                models.Guardrail.content.ilike(search_pattern)
+            )
+        )
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination and ordering
+    guardrails = query.order_by(models.Guardrail.created_at.desc()).offset(skip).limit(limit).all()
+
+    return guardrails, total

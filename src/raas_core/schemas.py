@@ -403,3 +403,37 @@ class GuardrailTemplateResponse(BaseModel):
     """Schema for guardrail template response."""
 
     template: str = Field(description="Complete markdown template with YAML frontmatter and guidance")
+
+
+class GuardrailUpdate(BaseModel):
+    """Schema for updating a guardrail."""
+
+    content: str = Field(..., min_length=1, description="Updated markdown content with YAML frontmatter")
+
+
+class GuardrailListItem(BaseModel):
+    """Schema for guardrail list items (lightweight, excludes full content)."""
+
+    id: UUID
+    human_readable_id: Optional[str] = None
+    organization_id: UUID
+    title: str
+    category: GuardrailCategory
+    enforcement_level: EnforcementLevel
+    applies_to: list[str] = Field(description="Requirement types this guardrail applies to")
+    status: GuardrailStatus
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GuardrailListResponse(BaseModel):
+    """Schema for paginated guardrail list."""
+
+    items: list[GuardrailListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
