@@ -12,7 +12,7 @@ All handlers follow a consistent pattern:
 
 Session state management (scope) is handled by the caller (transport-specific).
 """
-from typing import Optional, Any
+from typing import Optional, Any, Tuple, List
 import logging
 
 import httpx
@@ -655,8 +655,9 @@ async def handle_clear_persona(
     content = [TextContent(
         type="text",
         text="Persona cleared.\n\n"
-             "Status transitions will no longer include a default persona. "
-             "You can still provide persona explicitly in individual tool calls."
+             "WARNING: All status transitions will now fail with 403 Forbidden.\n"
+             "You must call select_persona() again before using transition_status() "
+             "or update_requirement()."
     )]
 
     # Return special marker to clear persona
@@ -667,8 +668,8 @@ async def apply_persona_defaults(
     tool_name: str,
     arguments: dict,
     current_persona: Optional[str] = None
-) -> dict:
-    """Apply session persona as default for tools that accept persona.
+) -> Tuple[dict, Optional[List[TextContent]]]:
+    """Apply session persona for tools that require persona authorization.
 
     Args:
         tool_name: Name of the tool being called
@@ -676,26 +677,59 @@ async def apply_persona_defaults(
         current_persona: Current session persona
 
     Returns:
-        Modified arguments with persona defaulted if applicable
+        Tuple of (modified arguments, error content or None)
+        If error content is not None, the caller should return it instead of proceeding.
     """
-    # Tools that should use persona as default
-    persona_tools = {
-        "update_requirement",
-        "transition_status",
+    # Tools that REQUIRE persona for status transitions
+    persona_required_tools = {
+        "transition_status",  # Always requires persona
     }
 
-    if tool_name not in persona_tools:
-        return arguments
+    # Tools that require persona only if status is being changed
+    persona_conditional_tools = {
+        "update_requirement",  # Requires persona only if status field is present
+    }
 
+    # Check if this is a tool that requires persona
+    requires_persona = False
+
+    if tool_name in persona_required_tools:
+        requires_persona = True
+    elif tool_name in persona_conditional_tools:
+        # update_requirement requires persona if:
+        # 1. "status" field is explicitly provided, OR
+        # 2. "content" field is provided (could contain status in frontmatter)
+        # We can't reliably parse frontmatter here, so we require persona
+        # for any update that might affect status.
+        if "status" in arguments or "content" in arguments:
+            requires_persona = True
+        # If only updating depends_on or other non-status fields, no persona needed
+
+    if not requires_persona:
+        return arguments, None
+
+    # Persona is required but not set
     if current_persona is None:
-        return arguments
+        error_content = [TextContent(
+            type="text",
+            text="ERROR: No persona set for status transition.\n\n"
+                 "You MUST call select_persona() before using this tool.\n\n"
+                 "Example: select_persona(persona='developer')\n\n"
+                 "Available personas:\n"
+                 "• developer - for draft→review, in_progress→implemented\n"
+                 "• product_owner - for review→approved\n"
+                 "• tester - for implemented→validated\n"
+                 "• release_manager - for validated→deployed\n"
+                 "• enterprise_architect - governance override (all transitions)\n"
+                 "• scrum_master - sprint coordination"
+        )]
+        return arguments, error_content
 
-    # Only apply default if persona not explicitly provided
-    if "persona" not in arguments:
-        arguments["persona"] = current_persona
-        logger.info(f"Using session persona: {current_persona}")
+    # Apply persona to arguments
+    arguments["persona"] = current_persona
+    logger.info(f"Using session persona: {current_persona}")
 
-    return arguments
+    return arguments, None
 
 
 # ============================================================================

@@ -77,8 +77,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
     # Apply project scope defaults to arguments if applicable
     arguments = await handlers.apply_project_scope_defaults(name, arguments, _session_project_scope)
 
-    # Apply persona defaults to arguments if applicable
-    arguments = await handlers.apply_persona_defaults(name, arguments, _session_persona)
+    # Apply persona defaults and check for required persona
+    arguments, persona_error = await handlers.apply_persona_defaults(name, arguments, _session_persona)
+    if persona_error is not None:
+        # Return the error content directly - persona is required but not set
+        return persona_error
 
     # Prepare headers with PAT authentication if available
     headers = {}

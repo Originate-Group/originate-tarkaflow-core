@@ -640,11 +640,13 @@ def get_tools() -> list[Tool]:
         # ============================================================================
         Tool(
             name="select_persona",
-            description="Set a default workflow persona for this session's status transitions. "
-                       "\n\nWHY USE THIS:"
-                       "\n• Eliminates repetitive persona parameter in transition_status, update_requirement"
-                       "\n• Ensures consistent persona declaration across all transitions"
-                       "\n• Audit trail shows persona for compliance"
+            description="Set your workflow persona for this session (REQUIRED before any status transitions). "
+                       "\n\nIMPORTANT: You MUST call select_persona() before using transition_status() or "
+                       "changing status via update_requirement(). Without a persona set, all transitions are unauthorized."
+                       "\n\nWHY THIS IS REQUIRED:"
+                       "\n• Enables audit trail of persona changes for compliance"
+                       "\n• Ensures explicit persona declaration before transitions"
+                       "\n• Prevents accidental unauthorized transitions"
                        "\n\nPERSONA AUTHORIZATION:"
                        "\n• Different transitions require different personas"
                        "\n• Developer: draft→review, in_progress→implemented"
@@ -655,12 +657,12 @@ def get_tools() -> list[Tool]:
                        "\n\nCOMMON PATTERNS:"
                        "\n• Start of session: select_persona(persona='developer') → work normally"
                        "\n• Switch roles: select_persona(persona='tester') → now authorized for validation"
-                       "\n• Override per-call: transition_status(..., persona='tester') → uses 'tester' for this call only"
+                       "\n• Check current: get_persona() → verify before critical transitions"
                        "\n\nRETURNS: Confirmation of persona set"
                        "\n\nRELATED TOOLS:"
                        "\n• get_persona() to check current persona"
-                       "\n• clear_persona() to remove default"
-                       "\n• transition_status() and update_requirement() use this as default",
+                       "\n• clear_persona() to remove persona (transitions will fail until re-selected)"
+                       "\n• transition_status() and update_requirement() require this to be set first",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -690,13 +692,16 @@ def get_tools() -> list[Tool]:
         Tool(
             name="clear_persona",
             description="Clear the persona setting for this session. "
+                       "\n\nWARNING: After clearing persona, ALL status transitions will fail until you call "
+                       "select_persona() again. Use this only when you want to explicitly block transitions."
                        "\n\nWHEN TO USE:"
-                       "\n• When you want to require explicit persona per transition"
-                       "\n• Before switching to a different persona (optional, select_persona replaces automatically)"
+                       "\n• End of session cleanup"
+                       "\n• When you want to ensure no accidental transitions"
+                       "\n• Before handing off to another agent/user"
                        "\n\nEFFECT:"
-                       "\n• Removes default persona from session"
-                       "\n• transition_status() and update_requirement() will not have a default persona"
-                       "\n• Can still pass persona explicitly in individual calls"
+                       "\n• Removes persona from session"
+                       "\n• transition_status() will return 403 Forbidden"
+                       "\n• update_requirement() status changes will return 403 Forbidden"
                        "\n\nRETURNS: Confirmation that persona was cleared",
             inputSchema={
                 "type": "object",
@@ -908,6 +913,9 @@ def get_tools() -> list[Tool]:
             name="update_requirement",
             description="Update an existing requirement using properly formatted markdown OR update specific fields directly. "
                        "Accepts both UUID and human-readable ID. "
+                       "\n\nPERSONA REQUIRED FOR STATUS CHANGES: If your update includes a status change "
+                       "(either via status field or in markdown frontmatter), you MUST call select_persona() first. "
+                       "Without a persona set, status transitions will return 403 Forbidden."
                        "\n\nCOMMON PATTERNS:"
                        "\n• Full content update: get_requirement() → modify content field → update_requirement(content=...)"
                        "\n• Add dependencies: update_requirement(requirement_id='...', depends_on=['uuid1', 'uuid2'])"
@@ -975,13 +983,6 @@ def get_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
-                    },
-                    "persona": {
-                        "type": "string",
-                        "enum": ["enterprise_architect", "product_owner", "scrum_master", "developer", "tester", "release_manager"],
-                        "description": "OPTIONAL: Declare your workflow persona for status transitions. "
-                                     "Required when persona enforcement is enabled. "
-                                     "Different personas are authorized for different transitions (e.g., only testers can validate, only release_manager can deploy)."
                     }
                 },
                 "required": ["requirement_id"]
@@ -1086,6 +1087,8 @@ def get_tools() -> list[Tool]:
             name="transition_status",
             description="Transition a requirement to a new lifecycle status (convenience tool, simpler than update_requirement). "
                        "Accepts both UUID and human-readable ID. "
+                       "\n\nPREREQUISITE: You MUST call select_persona() first to set your workflow persona. "
+                       "Without a persona set, this tool will return 403 Forbidden."
                        "\n\nSTATUS WORKFLOW (enforced state machine):"
                        "\n• Forward: draft → review → approved → in_progress → implemented → validated → deployed"
                        "\n• Can move backward 1+ steps (e.g., review → draft, approved → draft)"
@@ -1093,31 +1096,30 @@ def get_tools() -> list[Tool]:
                        "\n• deployed is terminal (cannot transition out, create new requirement instead)"
                        "\n• Same-status transitions allowed (no-op)"
                        "\n\nPERSONA AUTHORIZATION:"
-                       "\n• Different transitions require different personas"
+                       "\n• Different transitions require different personas (set via select_persona)"
                        "\n• Developer: draft→review, in_progress→implemented"
                        "\n• Tester: implemented→validated (cannot self-validate!)"
                        "\n• Release Manager: validated→deployed"
                        "\n• Product Owner: review→approved"
-                       "\n• Declare your persona to authorize the transition"
                        "\n\nCOMMON PATTERNS:"
-                       "\n• Submit for review: draft → review (persona=developer)"
-                       "\n• Approve after review: review → approved (persona=product_owner)"
-                       "\n• Start work: approved → in_progress (persona=developer)"
-                       "\n• Complete implementation: in_progress → implemented (persona=developer)"
-                       "\n• Validate: implemented → validated (persona=tester)"
-                       "\n• Deploy: validated → deployed (persona=release_manager)"
+                       "\n• select_persona(persona='developer') → transition_status(..., new_status='review')"
+                       "\n• select_persona(persona='product_owner') → transition_status(..., new_status='approved')"
+                       "\n• select_persona(persona='tester') → transition_status(..., new_status='validated')"
+                       "\n• select_persona(persona='release_manager') → transition_status(..., new_status='deployed')"
                        "\n\nWHEN TO USE:"
                        "\n• Use this tool for simple status-only changes (no other modifications)"
                        "\n• Use update_requirement() if you need to change content, dependencies, or other fields"
                        "\n\nRETURNS: Updated requirement object"
                        "\n\nRELATED TOOLS:"
-                       "\n• This is a convenience wrapper around update_requirement(status=...)"
-                       "\n• For full updates (content/dependencies), use update_requirement() directly"
+                       "\n• select_persona() - MUST be called first to set persona"
+                       "\n• get_persona() - check current persona before transitioning"
+                       "\n• update_requirement() - for full updates including status"
                        "\n\nERRORS:"
+                       "\n• 403: No persona set (call select_persona first)"
+                       "\n• 403: Persona not authorized for this transition"
                        "\n• 404: Requirement not found"
                        "\n• 400: Invalid state transition (e.g., draft → approved without review)"
-                       "\n• 400: Invalid status value (not one of 7 valid statuses)"
-                       "\n• 403: Forbidden (no permission to update or persona not authorized)",
+                       "\n• 400: Invalid status value (not one of 7 valid statuses)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1129,12 +1131,6 @@ def get_tools() -> list[Tool]:
                         "type": "string",
                         "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed"],
                         "description": "Target status"
-                    },
-                    "persona": {
-                        "type": "string",
-                        "enum": ["enterprise_architect", "product_owner", "scrum_master", "developer", "tester", "release_manager"],
-                        "description": "Declare your workflow persona to authorize the transition. "
-                                     "Different transitions require different personas (e.g., only testers can validate, only release_manager can deploy)."
                     }
                 },
                 "required": ["requirement_id", "new_status"]
