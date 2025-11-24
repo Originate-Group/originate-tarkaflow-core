@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import models, schemas
-from .markdown_utils import render_template, extract_metadata, merge_content, MarkdownParseError
+from .markdown_utils import (
+    render_template,
+    extract_metadata,
+    merge_content,
+    strip_system_fields_from_frontmatter,
+    inject_database_state,
+    MarkdownParseError
+)
 from .quality import calculate_quality_score, is_content_length_valid_for_approval, get_length_validation_error
 from .state_machine import validate_transition, StateTransitionError, STATUS_SORT_ORDER
 from .dependencies import (
@@ -168,8 +175,12 @@ def create_requirement(
             logger.warning(f"Permission denied for user {user_id} creating requirement: {e.message}")
             raise ValueError(e.message)
 
+    # Strip system-managed fields from frontmatter before storage
+    # This prevents desync when database state changes (e.g., status transitions)
+    cleaned_content = strip_system_fields_from_frontmatter(requirement.content)
+
     # Calculate content length and quality score
-    content_length = len(requirement.content) if requirement.content else 0
+    content_length = len(cleaned_content) if cleaned_content else 0
     quality_score = calculate_quality_score(content_length, requirement.type)
 
     # Validate content length for status review/approved
@@ -185,7 +196,7 @@ def create_requirement(
             parent_id=parent_id,
             title=title,
             description=description,
-            content=requirement.content,
+            content=cleaned_content,
             status=status,
             tags=tags,
             adheres_to=adheres_to,
@@ -533,13 +544,14 @@ def update_requirement(
                     if old_value != new_value:
                         changes.append((field, str(old_value), str(new_value)))
                         setattr(db_requirement, field, new_value)
-            # Update content
+            # Update content (strip system fields before storage)
+            cleaned_content = strip_system_fields_from_frontmatter(update_data["content"])
             old_content = db_requirement.content or ""
-            if old_content != update_data["content"]:
+            if old_content != cleaned_content:
                 changes.append(("content", "markdown updated", "markdown updated"))
-                db_requirement.content = update_data["content"]
+                db_requirement.content = cleaned_content
                 # Recalculate content length and quality score
-                db_requirement.content_length = len(update_data["content"])
+                db_requirement.content_length = len(cleaned_content)
                 db_requirement.quality_score = calculate_quality_score(
                     db_requirement.content_length,
                     db_requirement.type
@@ -595,12 +607,12 @@ def update_requirement(
         # Update markdown content if fields changed
         if fields_to_update and db_requirement.content:
             try:
-                db_requirement.content = merge_content(
+                updated_content = merge_content(
                     db_requirement.content, fields_to_update
                 )
             except MarkdownParseError:
                 # If merge fails, regenerate from template
-                db_requirement.content = render_template(
+                updated_content = render_template(
                     req_type=db_requirement.type,
                     title=db_requirement.title,
                     description=db_requirement.description or "",
@@ -608,6 +620,8 @@ def update_requirement(
                     status=db_requirement.status.value,
                     tags=db_requirement.tags,
                 )
+            # Strip system fields before storage
+            db_requirement.content = strip_system_fields_from_frontmatter(updated_content)
             # Recalculate content length and quality score after content update
             db_requirement.content_length = len(db_requirement.content) if db_requirement.content else 0
             db_requirement.quality_score = calculate_quality_score(

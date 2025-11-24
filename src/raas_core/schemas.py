@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from .models import (
     RequirementType,
@@ -116,6 +116,31 @@ class RequirementResponse(RequirementBase):
     child_count: int = Field(description="Number of direct children")
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='after')
+    def inject_database_state_into_content(self):
+        """Inject current database state into content frontmatter.
+
+        The stored content only contains authored fields (type, title, parent_id, tags,
+        depends_on, adheres_to). System-managed fields (status, human_readable_id, etc.)
+        are dynamically injected from database columns when returning to clients.
+
+        This ensures clients always see the current authoritative state, not stale
+        values from stored frontmatter.
+        """
+        if self.content:
+            from .markdown_utils import inject_database_state
+            try:
+                self.content = inject_database_state(
+                    self.content,
+                    self.status.value if hasattr(self.status, 'value') else str(self.status),
+                    self.human_readable_id
+                )
+            except Exception:
+                # If injection fails, return content as-is
+                # (This can happen with old/malformed content)
+                pass
+        return self
 
 
 class RequirementWithChildren(RequirementResponse):
