@@ -1699,53 +1699,17 @@ def get_guardrail_template() -> str:
 
     Returns:
         Complete markdown template with YAML frontmatter and guidance
+
+    Raises:
+        FileNotFoundError: If the template file doesn't exist
     """
-    template = """---
-type: guardrail
-title: "[Descriptive Guardrail Title]"
-category: security  # security, architecture
-enforcement_level: recommended  # advisory, recommended, mandatory
-applies_to: [epic, component, feature, requirement]  # Which requirement types this applies to
-status: draft  # draft, active, deprecated
----
+    from pathlib import Path
 
-# Guardrail: [Title]
+    template_path = Path(__file__).parent / "templates" / "guardrail.md"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Guardrail template not found: {template_path}")
 
-## Principle
-
-[One-sentence statement of the standard or pattern being codified]
-
-## Rationale
-
-[Why does this guardrail exist? What problems does it prevent? What value does it provide?]
-
-## Compliance Criteria
-
-[How do reviewers know if a requirement adheres to this guardrail?]
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
-
-## Examples
-
-### Good Example ✅
-
-[Example of a requirement that follows this guardrail]
-
-### Bad Example ❌
-
-[Example of a requirement that violates this guardrail]
-
-## Related Guardrails
-
-- [Optional: Links to related guardrails]
-
-## References
-
-- [Optional: External documentation, standards, or policies]
-"""
-    return template
+    return template_path.read_text()
 
 
 def update_guardrail(
