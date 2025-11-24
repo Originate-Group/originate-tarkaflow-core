@@ -68,7 +68,7 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageContent | EmbeddedResource]:
-    """Handle MCP tool calls."""
+    """Handle MCP tool calls by delegating to shared handlers."""
     global _session_project_scope
 
     logger.info(f"Tool call: {name} with arguments: {arguments}")
@@ -83,477 +83,71 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
 
     async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=30.0, headers=headers) as client:
         try:
-            # ============================================================================
-            # Organization Handlers
-            # ============================================================================
-            if name == "list_organizations":
-                params = {k: v for k, v in arguments.items() if v is not None}
-                response = await client.get("/organizations/", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {result['total']} organizations")
+            # Map tool names to handler functions
+            handler_map = {
+                # Organization handlers
+                "list_organizations": handlers.handle_list_organizations,
+                "get_organization": handlers.handle_get_organization,
+                "create_organization": handlers.handle_create_organization,
+                "update_organization": handlers.handle_update_organization,
+                "delete_organization": handlers.handle_delete_organization,
+                # Organization member handlers
+                "list_organization_members": handlers.handle_list_organization_members,
+                "add_organization_member": handlers.handle_add_organization_member,
+                "update_organization_member": handlers.handle_update_organization_member,
+                "remove_organization_member": handlers.handle_remove_organization_member,
+                # Project handlers
+                "list_projects": handlers.handle_list_projects,
+                "get_project": handlers.handle_get_project,
+                "create_project": handlers.handle_create_project,
+                "update_project": handlers.handle_update_project,
+                "delete_project": handlers.handle_delete_project,
+                # Project member handlers
+                "list_project_members": handlers.handle_list_project_members,
+                "add_project_member": handlers.handle_add_project_member,
+                "update_project_member": handlers.handle_update_project_member,
+                "remove_project_member": handlers.handle_remove_project_member,
+                # Project scope handlers
+                "select_project": handlers.handle_select_project,
+                "get_project_scope": handlers.handle_get_project_scope,
+                "clear_project_scope": handlers.handle_clear_project_scope,
+                # User handlers
+                "list_users": handlers.handle_list_users,
+                "search_users": handlers.handle_search_users,
+                "get_user": handlers.handle_get_user,
+                "get_user_by_email": handlers.handle_get_user_by_email,
+                # Requirement handlers
+                "get_requirement_template": handlers.handle_get_requirement_template,
+                "create_requirement": handlers.handle_create_requirement,
+                "list_requirements": handlers.handle_list_requirements,
+                "get_requirement": handlers.handle_get_requirement,
+                "update_requirement": handlers.handle_update_requirement,
+                "delete_requirement": handlers.handle_delete_requirement,
+                "get_requirement_children": handlers.handle_get_requirement_children,
+                "get_requirement_history": handlers.handle_get_requirement_history,
+                "transition_status": handlers.handle_transition_status,
+                # Guardrail handlers
+                "get_guardrail_template": handlers.handle_get_guardrail_template,
+                "create_guardrail": handlers.handle_create_guardrail,
+                "get_guardrail": handlers.handle_get_guardrail,
+                "update_guardrail": handlers.handle_update_guardrail,
+                "list_guardrails": handlers.handle_list_guardrails,
+            }
 
-                items_text = "\n\n".join([formatters.format_organization(item) for item in result['items']])
-                summary = f"Found {result['total']} organizations (page {result['page']} of {result['total_pages']})\n\n{items_text}"
-                return [TextContent(type="text", text=summary)]
-
-            elif name == "get_organization":
-                org_id = arguments["organization_id"]
-                response = await client.get(f"/organizations/{org_id}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully retrieved organization {org_id}: {result['name']}")
-                return [TextContent(type="text", text=formatters.format_organization(result))]
-
-            elif name == "create_organization":
-                response = await client.post("/organizations/", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully created organization: {result['name']} (ID: {result['id']})")
-                return [TextContent(
-                    type="text",
-                    text=f"Created organization: {result['name']}\nID: {result['id']}\nSlug: {result['slug']}\n\nFull details:\n{formatters.format_organization(result)}"
-                )]
-
-            elif name == "update_organization":
-                org_id = arguments.pop("organization_id")
-                response = await client.put(f"/organizations/{org_id}", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated organization {org_id}: {result['name']}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated organization: {result['name']}\n\n{formatters.format_organization(result)}"
-                )]
-
-            elif name == "delete_organization":
-                org_id = arguments["organization_id"]
-                response = await client.delete(f"/organizations/{org_id}")
-                response.raise_for_status()
-                logger.info(f"Successfully deleted organization {org_id}")
-                return [TextContent(type="text", text=f"Successfully deleted organization {org_id}")]
-
-            # ============================================================================
-            # Organization Member Handlers
-            # ============================================================================
-            elif name == "list_organization_members":
-                org_id = arguments["organization_id"]
-                response = await client.get(f"/organizations/{org_id}/members")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {len(result)} members for organization {org_id}")
-
-                if not result:
-                    return [TextContent(type="text", text="No members found for this organization.")]
-
-                members_text = "\n".join([formatters.format_organization_member(item) for item in result])
-                return [TextContent(type="text", text=f"Organization Members:\n\n{members_text}")]
-
-            elif name == "add_organization_member":
-                org_id = arguments["organization_id"]
-                response = await client.post(f"/organizations/{org_id}/members", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully added user {arguments['user_id']} to organization {org_id}")
-                return [TextContent(
-                    type="text",
-                    text=f"Added user {result['user_id']} to organization with role: {result['role']}"
-                )]
-
-            elif name == "update_organization_member":
-                org_id = arguments["organization_id"]
-                user_id = arguments["user_id"]
-                role = arguments["role"]
-                response = await client.put(f"/organizations/{org_id}/members/{user_id}", json={"role": role})
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated user {user_id} role in organization {org_id}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated user {result['user_id']} role to: {result['role']}"
-                )]
-
-            elif name == "remove_organization_member":
-                org_id = arguments["organization_id"]
-                user_id = arguments["user_id"]
-                response = await client.delete(f"/organizations/{org_id}/members/{user_id}")
-                response.raise_for_status()
-                logger.info(f"Successfully removed user {user_id} from organization {org_id}")
-                return [TextContent(type="text", text=f"Removed user {user_id} from organization")]
-
-            # ============================================================================
-            # Project Handlers
-            # ============================================================================
-            elif name == "list_projects":
-                params = {k: v for k, v in arguments.items() if v is not None}
-                response = await client.get("/projects/", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {result['total']} projects")
-
-                items_text = "\n\n".join([formatters.format_project(item) for item in result['items']])
-                summary = f"Found {result['total']} projects (page {result['page']} of {result['total_pages']})\n\n{items_text}"
-                return [TextContent(type="text", text=summary)]
-
-            elif name == "get_project":
-                project_id = arguments["project_id"]
-                response = await client.get(f"/projects/{project_id}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully retrieved project {project_id}: {result['name']}")
-                return [TextContent(type="text", text=formatters.format_project(result))]
-
-            elif name == "create_project":
-                response = await client.post("/projects/", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully created project: {result['name']} (ID: {result['id']})")
-                return [TextContent(
-                    type="text",
-                    text=f"Created project: {result['name']} ({result['slug']})\nID: {result['id']}\nStatus: {result['status']}\n\nFull details:\n{formatters.format_project(result)}"
-                )]
-
-            elif name == "update_project":
-                project_id = arguments.pop("project_id")
-                response = await client.put(f"/projects/{project_id}", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated project {project_id}: {result['name']}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated project: {result['name']}\n\n{formatters.format_project(result)}"
-                )]
-
-            elif name == "delete_project":
-                project_id = arguments["project_id"]
-                response = await client.delete(f"/projects/{project_id}")
-                response.raise_for_status()
-                logger.info(f"Successfully deleted project {project_id}")
-                return [TextContent(type="text", text=f"Successfully deleted project {project_id}")]
-
-            elif name == "list_project_members":
-                project_id = arguments["project_id"]
-                response = await client.get(f"/projects/{project_id}/members")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {len(result)} members for project {project_id}")
-
-                if not result:
-                    return [TextContent(type="text", text="No members found for this project.")]
-
-                members_text = "\n".join([formatters.format_project_member(item) for item in result])
-                return [TextContent(type="text", text=f"Project Members:\n\n{members_text}")]
-
-            elif name == "add_project_member":
-                project_id = arguments["project_id"]
-                response = await client.post(f"/projects/{project_id}/members", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully added user {arguments['user_id']} to project {project_id}")
-                return [TextContent(
-                    type="text",
-                    text=f"Added user {result['user_id']} to project with role: {result['role']}"
-                )]
-
-            elif name == "update_project_member":
-                project_id = arguments["project_id"]
-                user_id = arguments["user_id"]
-                role = arguments["role"]
-                response = await client.put(f"/projects/{project_id}/members/{user_id}", json={"role": role})
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated user {user_id} role in project {project_id}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated user {result['user_id']} role to: {result['role']}"
-                )]
-
-            elif name == "remove_project_member":
-                project_id = arguments["project_id"]
-                user_id = arguments["user_id"]
-                response = await client.delete(f"/projects/{project_id}/members/{user_id}")
-                response.raise_for_status()
-                logger.info(f"Successfully removed user {user_id} from project {project_id}")
-                return [TextContent(type="text", text=f"Removed user {user_id} from project")]
-
-            # ============================================================================
-            # Project Scope Handlers
-            # ============================================================================
-            elif name == "select_project":
-                content, new_scope = await handlers.handle_select_project(arguments, client, _session_project_scope)
-                _session_project_scope = new_scope
-                return content
-
-            elif name == "get_project_scope":
-                content, _ = await handlers.handle_get_project_scope(arguments, client, _session_project_scope)
-                return content
-
-            elif name == "clear_project_scope":
-                content, new_scope = await handlers.handle_clear_project_scope(arguments, client, _session_project_scope)
-                _session_project_scope = new_scope
-                return content
-
-            # ============================================================================
-            # User Handlers
-            # ============================================================================
-            elif name == "list_users":
-                params = {k: v for k, v in arguments.items() if v is not None}
-                response = await client.get("/users/", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {result['total']} users")
-
-                if result['total'] == 0:
-                    return [TextContent(type="text", text="No users found.")]
-
-                users_text = "\n\n".join([formatters.format_user(item) for item in result['items']])
-                summary = f"Found {result['total']} users (page {result['page']} of {result['total_pages']})\n\n{users_text}"
-                return [TextContent(type="text", text=summary)]
-
-            elif name == "search_users":
-                params = {k: v for k, v in arguments.items() if v is not None}
-                response = await client.get("/users/search", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully searched users: found {result['total']} results")
-
-                if result['total'] == 0:
-                    return [TextContent(type="text", text="No users found matching search criteria.")]
-
-                users_text = "\n\n".join([formatters.format_user(item) for item in result['items']])
-                summary = f"Found {result['total']} users (page {result['page']} of {result['total_pages']})\n\n{users_text}"
-                return [TextContent(type="text", text=summary)]
-
-            elif name == "get_user":
-                user_id = arguments["user_id"]
-                response = await client.get(f"/users/{user_id}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully retrieved user {user_id}: {result['email']}")
-                return [TextContent(type="text", text=formatters.format_user(result))]
-
-            elif name == "get_user_by_email":
-                email = arguments["email"]
-                response = await client.get(f"/users/by-email/{email}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully found user by email {email}: {result['id']}")
-                return [TextContent(type="text", text=formatters.format_user(result))]
-
-            # ============================================================================
-            # Requirement Handlers
-            # ============================================================================
-            elif name == "get_requirement_template":
-                req_type = arguments["type"]
-                response = await client.get(f"/requirements/templates/{req_type}")
-                response.raise_for_status()
-                result = response.json()
-                template_content = result["template"]
-                logger.info(f"Successfully retrieved template for {req_type}")
-                return [TextContent(
-                    type="text",
-                    text=f"Template for '{req_type}' requirement:\n\n```markdown\n{template_content}\n```\n\n"
-                         f"INSTRUCTIONS:\n"
-                         f"1. Copy the template above\n"
-                         f"2. Replace placeholder values in the YAML frontmatter and markdown body\n"
-                         f"3. Maintain the exact structure (frontmatter + markdown body)\n"
-                         f"4. Pass the complete filled-in content to create_requirement() or update_requirement()"
-                )]
-
-            elif name == "create_requirement":
-                response = await client.post("/requirements/", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                readable_id = result.get('human_readable_id', 'PENDING')
-                logger.info(f"Successfully created {result['type']}: {result['title']} ([{readable_id}])")
-                return [TextContent(
-                    type="text",
-                    text=f"✅ Requirement created successfully!\n\n[{readable_id}] {result['title']}\nUUID: {result['id']}\nType: {result['type']}\nStatus: {result['status']}\n\nYou can reference this requirement as either:\n- Readable ID: {readable_id}\n- UUID: {result['id']}\n\nFull details:\n{formatters.format_requirement(result)}"
-                )]
-
-            elif name == "list_requirements":
-                params = {k: v for k, v in arguments.items() if v is not None}
-                response = await client.get("/requirements/", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed {result['total']} requirements (page {result['page']}/{result['total_pages']})")
-
-                items_text = "\n".join([formatters.format_requirement_summary(item) for item in result['items']])
-                summary = f"Found {result['total']} requirements (page {result['page']}/{result['total_pages']})\n{items_text}"
-                return [TextContent(type="text", text=summary)]
-
-            elif name == "get_requirement":
-                req_id = arguments["requirement_id"]
-                response = await client.get(f"/requirements/{req_id}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully retrieved requirement {req_id}: {result['title']}")
-                return [TextContent(type="text", text=formatters.format_requirement(result))]
-
-            elif name == "update_requirement":
-                req_id = arguments.pop("requirement_id")
-                response = await client.patch(f"/requirements/{req_id}", json=arguments)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated requirement {req_id}: {result['title']}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated requirement: {result['title']}\n\n{formatters.format_requirement(result)}"
-                )]
-
-            elif name == "delete_requirement":
-                req_id = arguments["requirement_id"]
-                response = await client.delete(f"/requirements/{req_id}")
-                response.raise_for_status()
-                logger.info(f"Successfully deleted requirement {req_id}")
-                return [TextContent(type="text", text=f"Successfully deleted requirement {req_id}")]
-
-            elif name == "get_requirement_children":
-                req_id = arguments["requirement_id"]
-                response = await client.get(f"/requirements/{req_id}/children")
-                response.raise_for_status()
-                result = response.json()
-
-                if not result:
-                    logger.info(f"No children found for requirement {req_id}")
-                    return [TextContent(type="text", text="No children found for this requirement.")]
-
-                logger.info(f"Successfully retrieved {len(result)} children for requirement {req_id}")
-                children_text = "\n".join([formatters.format_requirement_summary(item) for item in result])
-                return [TextContent(type="text", text=f"Children ({len(result)}):\n{children_text}")]
-
-            elif name == "get_requirement_history":
-                req_id = arguments["requirement_id"]
-                limit = arguments.get("limit", 50)
-                response = await client.get(f"/requirements/{req_id}/history", params={"limit": limit})
-                response.raise_for_status()
-                result = response.json()
-
-                if not result:
-                    logger.info(f"No history found for requirement {req_id}")
-                    return [TextContent(type="text", text="No history found for this requirement.")]
-
-                logger.info(f"Successfully retrieved {len(result)} history entries for requirement {req_id}")
-                history_text = "\n".join([formatters.format_history(item) for item in result])
-                return [TextContent(type="text", text=f"Change History:\n\n{history_text}")]
-
-            elif name == "transition_status":
-                req_id = arguments["requirement_id"]
-                new_status = arguments["new_status"]
-                response = await client.patch(f"/requirements/{req_id}", json={"status": new_status})
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully transitioned requirement {req_id} to status: {new_status}")
-                return [TextContent(
-                    type="text",
-                    text=f"Transitioned '{result['title']}' to status: {new_status}"
-                )]
-
-            # ============================================================================
-            # Guardrail Handlers
-            # ============================================================================
-            elif name == "get_guardrail_template":
-                response = await client.get("/guardrails/template")
-                response.raise_for_status()
-                result = response.json()
-                logger.info("Successfully retrieved guardrail template")
-                return [TextContent(type="text", text=result["template"])]
-
-            elif name == "create_guardrail":
-                org_id = arguments["organization_id"]
-                content = arguments["content"]
-                response = await client.post("/guardrails/", json={
-                    "organization_id": org_id,
-                    "content": content
-                })
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully created guardrail {result['human_readable_id']}: {result['title']}")
-                return [TextContent(
-                    type="text",
-                    text=f"Created guardrail: {result['title']}\n"
-                         f"ID: {result['human_readable_id']}\n"
-                         f"Category: {result['category']}\n"
-                         f"Enforcement Level: {result['enforcement_level']}\n"
-                         f"Status: {result['status']}\n"
-                         f"Applies To: {', '.join(result['applies_to'])}\n\n"
-                         f"UUID: {result['id']}"
-                )]
-
-            elif name == "get_guardrail":
-                guardrail_id = arguments["guardrail_id"]
-                response = await client.get(f"/guardrails/{guardrail_id}")
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully retrieved guardrail {guardrail_id}")
-                return [TextContent(
-                    type="text",
-                    text=f"Guardrail: {result['title']} ({result['human_readable_id']})\n"
-                         f"Category: {result['category']}\n"
-                         f"Enforcement Level: {result['enforcement_level']}\n"
-                         f"Status: {result['status']}\n"
-                         f"Applies To: {', '.join(result['applies_to'])}\n"
-                         f"Created: {result['created_at']}\n"
-                         f"Updated: {result['updated_at']}\n\n"
-                         f"Content:\n{result['content']}"
-                )]
-
-            elif name == "update_guardrail":
-                guardrail_id = arguments["guardrail_id"]
-                content = arguments["content"]
-                response = await client.patch(f"/guardrails/{guardrail_id}", json={"content": content})
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully updated guardrail {result['human_readable_id']}: {result['title']}")
-                return [TextContent(
-                    type="text",
-                    text=f"Updated guardrail: {result['title']}\n"
-                         f"ID: {result['human_readable_id']}\n"
-                         f"Category: {result['category']}\n"
-                         f"Enforcement Level: {result['enforcement_level']}\n"
-                         f"Status: {result['status']}\n"
-                         f"Applies To: {', '.join(result['applies_to'])}\n"
-                         f"Updated: {result['updated_at']}"
-                )]
-
-            elif name == "list_guardrails":
-                # Build query parameters
-                params = {}
-                for key in ["organization_id", "category", "enforcement_level", "applies_to", "status", "search", "page", "page_size"]:
-                    if key in arguments and arguments[key] is not None:
-                        # Handle 'all' status - convert to None to show all statuses
-                        if key == "status" and arguments[key] == "all":
-                            params[key] = None
-                        else:
-                            params[key] = arguments[key]
-
-                response = await client.get("/guardrails/", params=params)
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"Successfully listed guardrails: {result['total']} total, page {result['page']}")
-
-                if result['total'] == 0:
-                    return [TextContent(type="text", text="No guardrails found matching the filters.")]
-
-                items_text = "\n\n".join([
-                    f"{item['human_readable_id']}: {item['title']}\n"
-                    f"  Category: {item['category']}\n"
-                    f"  Enforcement: {item['enforcement_level']}\n"
-                    f"  Status: {item['status']}\n"
-                    f"  Applies To: {', '.join(item['applies_to'])}\n"
-                    f"  Description: {item['description'] or '(none)'}"
-                    for item in result['items']
-                ])
-
-                summary = (
-                    f"Found {result['total']} guardrails (page {result['page']} of {result['total_pages']})\n\n"
-                    f"{items_text}"
-                )
-                return [TextContent(type="text", text=summary)]
-
-            else:
+            # Look up and execute handler
+            handler = handler_map.get(name)
+            if not handler:
                 logger.warning(f"Unknown tool requested: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
+
+            # Execute handler and get result
+            content, new_scope = await handler(arguments, client, _session_project_scope)
+
+            # Update session scope if handler modified it
+            if new_scope is not _session_project_scope:
+                _session_project_scope = new_scope
+
+            return content
 
         except httpx.HTTPStatusError as e:
             # Log detailed HTTP error information
