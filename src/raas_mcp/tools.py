@@ -1133,4 +1133,97 @@ def get_tools() -> list[Tool]:
                 "required": ["guardrail_id"]
             }
         ),
+        Tool(
+            name="update_guardrail",
+            description="Update an existing guardrail with new markdown content. "
+                       "\n\nWORKFLOW:"
+                       "\n1. Call get_guardrail() to retrieve current content"
+                       "\n2. Modify the markdown content (update title, status, body, etc.)"
+                       "\n3. Pass complete updated markdown in update_guardrail(content=...)"
+                       "\n\nFEATURES:"
+                       "\n• All fields updatable: title, category, enforcement_level, applies_to, status, content"
+                       "\n• UUID and human-readable ID remain stable across updates"
+                       "\n• Validates structure same as creation"
+                       "\n• Updates are immediate"
+                       "\n\nRETURNS: Updated guardrail object"
+                       "\n\nERRORS:"
+                       "\n• 404: Guardrail not found"
+                       "\n• 400: Invalid markdown format"
+                       "\n• 403: Forbidden (user must be org admin or owner)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "guardrail_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID (e.g., 'GUARD-SEC-001') of the guardrail to update"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "REQUIRED: Complete updated markdown content with YAML frontmatter"
+                    }
+                },
+                "required": ["guardrail_id", "content"]
+            }
+        ),
+        Tool(
+            name="list_guardrails",
+            description="List and filter organizational guardrails with pagination and search. "
+                       "\n\nFILTERS:"
+                       "\n• organization_id: Filter by organization UUID"
+                       "\n• category: Filter by category (security, architecture)"
+                       "\n• enforcement_level: Filter by level (advisory, recommended, mandatory)"
+                       "\n• applies_to: Filter by requirement type (epic, component, feature, requirement)"
+                       "\n• status: Filter by status (defaults to 'active' only, use 'all' for all statuses)"
+                       "\n• search: Keyword search in title and content"
+                       "\n\nDEFAULT BEHAVIOR:"
+                       "\n• Returns only active guardrails unless status filter specified"
+                       "\n• Multiple filters combine with AND logic"
+                       "\n• Results ordered by creation date (newest first)"
+                       "\n\nRETURNS: Paginated list with lightweight items (excludes full content)"
+                       "\n• Each item includes: id, human_readable_id, title, category, enforcement_level, applies_to, status, description"
+                       "\n• Use get_guardrail() to fetch full content for specific guardrail"
+                       "\n\nRELATED TOOLS:"
+                       "\n• Use get_guardrail() to view full content of a specific guardrail",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Filter by organization UUID (optional)"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["security", "architecture"],
+                        "description": "Filter by category (optional)"
+                    },
+                    "enforcement_level": {
+                        "type": "string",
+                        "enum": ["advisory", "recommended", "mandatory"],
+                        "description": "Filter by enforcement level (optional)"
+                    },
+                    "applies_to": {
+                        "type": "string",
+                        "enum": ["epic", "component", "feature", "requirement"],
+                        "description": "Filter by requirement type applicability (optional)"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["draft", "active", "deprecated", "all"],
+                        "description": "Filter by status (defaults to 'active', use 'all' for all statuses)"
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Search keyword for title/content (optional)"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (default: 1)"
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Items per page (default: 50)"
+                    }
+                }
+            }
+        ),
     ]

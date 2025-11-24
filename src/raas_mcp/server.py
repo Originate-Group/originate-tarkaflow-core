@@ -498,6 +498,59 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                          f"Content:\n{result['content']}"
                 )]
 
+            elif name == "update_guardrail":
+                guardrail_id = arguments["guardrail_id"]
+                content = arguments["content"]
+                response = await client.patch(f"/guardrails/{guardrail_id}", json={"content": content})
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"Successfully updated guardrail {result['human_readable_id']}: {result['title']}")
+                return [TextContent(
+                    type="text",
+                    text=f"Updated guardrail: {result['title']}\n"
+                         f"ID: {result['human_readable_id']}\n"
+                         f"Category: {result['category']}\n"
+                         f"Enforcement Level: {result['enforcement_level']}\n"
+                         f"Status: {result['status']}\n"
+                         f"Applies To: {', '.join(result['applies_to'])}\n"
+                         f"Updated: {result['updated_at']}"
+                )]
+
+            elif name == "list_guardrails":
+                # Build query parameters
+                params = {}
+                for key in ["organization_id", "category", "enforcement_level", "applies_to", "status", "search", "page", "page_size"]:
+                    if key in arguments and arguments[key] is not None:
+                        # Handle 'all' status - convert to None to show all statuses
+                        if key == "status" and arguments[key] == "all":
+                            params[key] = None
+                        else:
+                            params[key] = arguments[key]
+
+                response = await client.get("/guardrails/", params=params)
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"Successfully listed guardrails: {result['total']} total, page {result['page']}")
+
+                if result['total'] == 0:
+                    return [TextContent(type="text", text="No guardrails found matching the filters.")]
+
+                items_text = "\n\n".join([
+                    f"{item['human_readable_id']}: {item['title']}\n"
+                    f"  Category: {item['category']}\n"
+                    f"  Enforcement: {item['enforcement_level']}\n"
+                    f"  Status: {item['status']}\n"
+                    f"  Applies To: {', '.join(item['applies_to'])}\n"
+                    f"  Description: {item['description'] or '(none)'}"
+                    for item in result['items']
+                ])
+
+                summary = (
+                    f"Found {result['total']} guardrails (page {result['page']} of {result['total_pages']})\n\n"
+                    f"{items_text}"
+                )
+                return [TextContent(type="text", text=summary)]
+
             else:
                 logger.warning(f"Unknown tool requested: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
