@@ -559,7 +559,7 @@ def update_requirement(
                         from_status=db_requirement.status,
                         to_status=metadata["status"],
                         org_settings=org_settings,
-                        require_persona=False,  # Optional for now during rollout
+                        require_persona=True,  # Strict enforcement enabled
                     )
                 except PersonaAuthorizationError as e:
                     logger.warning(f"Persona authorization blocked: {e}")
@@ -645,7 +645,7 @@ def update_requirement(
                     from_status=db_requirement.status,
                     to_status=update_data["status"],
                     org_settings=org_settings,
-                    require_persona=False,  # Optional for now during rollout
+                    require_persona=True,  # Strict enforcement enabled
                 )
             except PersonaAuthorizationError as e:
                 logger.warning(f"Persona authorization blocked: {e}")
@@ -987,19 +987,28 @@ def get_organizations(
     db: Session,
     skip: int = 0,
     limit: int = 100,
+    user_id: Optional[UUID] = None,
 ) -> tuple[list[models.Organization], int]:
     """
-    Get all organizations with pagination.
+    Get organizations with pagination, optionally filtered by user membership.
 
     Args:
         db: Database session
         skip: Number of records to skip
         limit: Maximum number of records to return
+        user_id: If provided, only return organizations where user is a member
 
     Returns:
         Tuple of (organizations list, total count)
     """
     query = db.query(models.Organization)
+
+    # Filter by user membership if user_id provided
+    if user_id:
+        query = query.join(models.OrganizationMember).filter(
+            models.OrganizationMember.user_id == user_id
+        )
+
     total = query.count()
     organizations = (
         query.order_by(models.Organization.created_at.desc())
@@ -1317,6 +1326,7 @@ def get_projects(
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
+    user_id: Optional[UUID] = None,
 ) -> tuple[list[models.Project], int]:
     """
     Get projects with optional filtering and pagination.
@@ -1329,11 +1339,18 @@ def get_projects(
         search: Optional search in name and description
         skip: Number of records to skip
         limit: Maximum number of records to return
+        user_id: If provided, only return projects from orgs where user is a member
 
     Returns:
         Tuple of (projects list, total count)
     """
     query = db.query(models.Project)
+
+    # Filter by user's organization membership if user_id provided
+    if user_id:
+        query = query.join(models.Organization).join(models.OrganizationMember).filter(
+            models.OrganizationMember.user_id == user_id
+        )
 
     if organization_id:
         query = query.filter(models.Project.organization_id == organization_id)
@@ -1630,12 +1647,46 @@ def get_user_by_email(
     return db.query(models.User).filter(models.User.email.ilike(email)).first()
 
 
+def users_share_organization(
+    db: Session,
+    user_id_1: UUID,
+    user_id_2: UUID,
+) -> bool:
+    """
+    Check if two users share at least one organization.
+
+    Args:
+        db: Database session
+        user_id_1: First user's UUID
+        user_id_2: Second user's UUID
+
+    Returns:
+        True if users share at least one organization
+    """
+    from sqlalchemy.orm import aliased
+
+    # Create aliases for the OrganizationMember table
+    om1 = aliased(models.OrganizationMember)
+    om2 = aliased(models.OrganizationMember)
+
+    # Check if there's any organization where both users are members
+    shared = (
+        db.query(om1)
+        .join(om2, om1.organization_id == om2.organization_id)
+        .filter(om1.user_id == user_id_1, om2.user_id == user_id_2)
+        .first()
+    )
+
+    return shared is not None
+
+
 def search_users(
     db: Session,
     organization_id: Optional[UUID] = None,
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
+    requesting_user_id: Optional[UUID] = None,
 ) -> tuple[list[models.User], int]:
     """
     Search users with optional filtering.
@@ -1646,15 +1697,31 @@ def search_users(
         search: Optional search term (searches email and full_name)
         skip: Number of records to skip
         limit: Maximum number of records to return
+        requesting_user_id: If provided, only return users in shared organizations
 
     Returns:
         Tuple of (users list, total count)
     """
     query = db.query(models.User).filter(models.User.is_active == True)
 
+    # In team mode, filter to users in shared organizations
+    if requesting_user_id:
+        # Get all org IDs the requesting user is a member of
+        user_org_ids = (
+            db.query(models.OrganizationMember.organization_id)
+            .filter(models.OrganizationMember.user_id == requesting_user_id)
+            .subquery()
+        )
+        # Filter to users who are members of any of those orgs
+        query = query.join(models.OrganizationMember).filter(
+            models.OrganizationMember.organization_id.in_(user_org_ids)
+        ).distinct()
+
     # Filter by organization membership if specified
     if organization_id:
-        query = query.join(models.OrganizationMember).filter(
+        if not requesting_user_id:
+            query = query.join(models.OrganizationMember)
+        query = query.filter(
             models.OrganizationMember.organization_id == organization_id
         )
 
@@ -1681,19 +1748,34 @@ def list_users(
     db: Session,
     skip: int = 0,
     limit: int = 50,
+    requesting_user_id: Optional[UUID] = None,
 ) -> tuple[list[models.User], int]:
     """
-    List all active users with pagination.
+    List active users with pagination.
 
     Args:
         db: Database session
         skip: Number of records to skip
         limit: Maximum number of records to return
+        requesting_user_id: If provided, only return users in shared organizations
 
     Returns:
         Tuple of (users list, total count)
     """
     query = db.query(models.User).filter(models.User.is_active == True)
+
+    # In team mode, filter to users in shared organizations
+    if requesting_user_id:
+        # Get all org IDs the requesting user is a member of
+        user_org_ids = (
+            db.query(models.OrganizationMember.organization_id)
+            .filter(models.OrganizationMember.user_id == requesting_user_id)
+            .subquery()
+        )
+        # Filter to users who are members of any of those orgs
+        query = query.join(models.OrganizationMember).filter(
+            models.OrganizationMember.organization_id.in_(user_org_ids)
+        ).distinct()
 
     # Get total count before pagination
     total = query.count()
@@ -2047,6 +2129,7 @@ def list_guardrails(
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
+    user_id: Optional[UUID] = None,
 ) -> tuple[list[models.Guardrail], int]:
     """
     List guardrails with filtering and pagination.
@@ -2061,11 +2144,18 @@ def list_guardrails(
         search: Search keyword for title/content (optional)
         skip: Number of records to skip (pagination)
         limit: Maximum number of records to return
+        user_id: If provided, only return guardrails from orgs where user is a member
 
     Returns:
         Tuple of (guardrails list, total count)
     """
     query = db.query(models.Guardrail)
+
+    # Filter by user's organization membership if user_id provided
+    if user_id:
+        query = query.join(models.Organization).join(models.OrganizationMember).filter(
+            models.OrganizationMember.user_id == user_id
+        )
 
     # Apply filters
     if organization_id:
