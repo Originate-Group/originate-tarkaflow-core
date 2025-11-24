@@ -1236,6 +1236,7 @@ def update_project(
     project_type: Optional[str] = None,
     tags: Optional[list[str]] = None,
     settings: Optional[dict] = None,
+    organization_id: Optional[UUID] = None,
     user_id: Optional[UUID] = None,
 ) -> Optional[models.Project]:
     """
@@ -1252,6 +1253,7 @@ def update_project(
         project_type: Optional new project type
         tags: Optional new tags list
         settings: Optional new settings
+        organization_id: Optional new organization ID (to move project)
         user_id: Optional user ID (who is making the update)
 
     Returns:
@@ -1277,6 +1279,8 @@ def update_project(
         db_project.tags = tags
     if settings is not None:
         db_project.settings = settings
+    if organization_id is not None:
+        db_project.organization_id = organization_id
     if user_id is not None:
         db_project.updated_by_user_id = user_id
 

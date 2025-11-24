@@ -281,6 +281,7 @@ class ProjectUpdate(BaseModel):
     project_type: Optional[str] = Field(None, max_length=100)
     tags: Optional[list[str]] = None
     settings: Optional[dict] = None
+    organization_id: Optional[UUID] = None
 
 
 class ProjectResponse(ProjectBase):

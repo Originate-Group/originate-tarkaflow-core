@@ -138,7 +138,19 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
-        project = crud.update_project(db, project_id, project_update)
+        project = crud.update_project(
+            db,
+            project_id,
+            name=project_update.name,
+            description=project_update.description,
+            visibility=project_update.visibility,
+            status=project_update.status,
+            value_statement=project_update.value_statement,
+            project_type=project_update.project_type,
+            tags=project_update.tags,
+            settings=project_update.settings,
+            organization_id=project_update.organization_id,
+        )
         return project
     except Exception as e:
         logger.error(f"Error updating project {project_id}: {e}", exc_info=True)
