@@ -119,6 +119,10 @@ def create_requirement(
         )
         logger.info(f"Created {result.type.value} '{result.title}' (ID: {result.id})")
         return result
+    except ValueError as e:
+        # Validation errors from crud layer (e.g., invalid guardrail references, invalid dependencies)
+        logger.warning(f"Validation error creating requirement: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating requirement: {e}", exc_info=True)
         raise
