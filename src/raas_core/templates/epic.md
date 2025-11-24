@@ -1,7 +1,6 @@
 ---
 type: epic
 title: "{title}"
-status: {status}
 tags: {tags}
 depends_on: []
 # OPTIONAL: List epic UUIDs or human-readable IDs this epic depends on
@@ -12,6 +11,7 @@ adheres_to: []
 # Can use UUID (e.g., "123e4567-e89b-12d3-a456-426614174000")
 # or human-readable ID (e.g., "GUARD-SEC-001")
 # Use list_guardrails tool to discover available guardrails
+# NOTE: status, id, and timestamps are system-managed and auto-injected on retrieval
 ---
 
 # Epic: {title}

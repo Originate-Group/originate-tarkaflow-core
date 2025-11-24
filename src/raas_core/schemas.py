@@ -427,6 +427,32 @@ class GuardrailResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @model_validator(mode='after')
+    def inject_database_state_into_content(self):
+        """Inject current database state into content frontmatter.
+
+        The stored content only contains authored fields (title, category,
+        enforcement_level, applies_to). System-managed fields (status,
+        human_readable_id, etc.) are dynamically injected from database
+        columns when returning to clients.
+
+        This ensures clients always see the current authoritative state, not stale
+        values from stored frontmatter.
+        """
+        if self.content:
+            from .markdown_utils import inject_database_state
+            try:
+                self.content = inject_database_state(
+                    self.content,
+                    self.status.value if hasattr(self.status, 'value') else str(self.status),
+                    self.human_readable_id
+                )
+            except Exception:
+                # If injection fails, return content as-is
+                # (This can happen with old/malformed content)
+                pass
+        return self
+
 
 class GuardrailTemplateResponse(BaseModel):
     """Schema for guardrail template response."""

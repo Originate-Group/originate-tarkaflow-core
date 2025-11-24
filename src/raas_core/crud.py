@@ -1734,10 +1734,14 @@ def create_guardrail(
             f"Must be one of: {', '.join(valid_requirement_types)}"
         )
 
-    # Auto-extract description from content if not provided
+    # Strip system-managed fields from frontmatter before storage
+    # This prevents desync when database state changes (e.g., status transitions)
+    cleaned_content = strip_system_fields_from_frontmatter(content)
+
+    # Auto-extract description from cleaned content if not provided
     if not description:
         # Extract first paragraph after frontmatter
-        content_body = content.split("---", 2)[2] if content.count("---") >= 2 else ""
+        content_body = cleaned_content.split("---", 2)[2] if cleaned_content.count("---") >= 2 else ""
         lines = [line.strip() for line in content_body.strip().split("\n") if line.strip() and not line.startswith("#")]
         description = lines[0][:500] if lines else ""
 
@@ -1749,7 +1753,7 @@ def create_guardrail(
         enforcement_level=enforcement_enum,
         applies_to=applies_to,
         status=status_enum,
-        content=content,
+        content=cleaned_content,
         description=description,
         created_by_user_id=user_id,
         updated_by_user_id=user_id,
@@ -1911,9 +1915,13 @@ def update_guardrail(
             f"Must be one of: {', '.join(valid_requirement_types)}"
         )
 
+    # Strip system-managed fields from frontmatter before storage
+    # This prevents desync when database state changes (e.g., status transitions)
+    cleaned_content = strip_system_fields_from_frontmatter(content)
+
     # Auto-extract description if not provided
     if not description:
-        content_body = content.split("---", 2)[2] if content.count("---") >= 2 else ""
+        content_body = cleaned_content.split("---", 2)[2] if cleaned_content.count("---") >= 2 else ""
         lines = [line.strip() for line in content_body.strip().split("\n") if line.strip() and not line.startswith("#")]
         description = lines[0][:500] if lines else ""
 
@@ -1923,7 +1931,7 @@ def update_guardrail(
     db_guardrail.enforcement_level = enforcement_enum
     db_guardrail.applies_to = applies_to
     db_guardrail.status = status_enum
-    db_guardrail.content = content
+    db_guardrail.content = cleaned_content
     db_guardrail.description = description
     db_guardrail.updated_by_user_id = user_id
 
