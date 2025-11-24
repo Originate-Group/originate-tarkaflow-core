@@ -563,6 +563,142 @@ async def apply_project_scope_defaults(
 
 
 # ============================================================================
+# Persona Scope Handlers
+# ============================================================================
+
+# Valid personas for workflow authorization
+VALID_PERSONAS = {
+    "enterprise_architect",
+    "product_owner",
+    "scrum_master",
+    "developer",
+    "tester",
+    "release_manager",
+}
+
+
+async def handle_select_persona(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Handle select_persona tool call.
+
+    Args:
+        arguments: Tool arguments containing persona
+        client: HTTP client (not used for this operation)
+        current_scope: Current project scope (passed through unchanged)
+
+    Returns:
+        Tuple of (response content, persona scope marker)
+    """
+    persona = arguments["persona"].lower()
+
+    # Validate persona
+    if persona not in VALID_PERSONAS:
+        valid_list = ", ".join(sorted(VALID_PERSONAS))
+        return [TextContent(
+            type="text",
+            text=f"Invalid persona: {persona}\n\nValid personas: {valid_list}"
+        )], current_scope
+
+    logger.info(f"Set persona to: {persona}")
+
+    content = [TextContent(
+        type="text",
+        text=f"Persona set to: {persona}\n\n"
+             f"All status transitions will now use this persona for authorization.\n"
+             f"The persona is logged in the audit trail for compliance."
+    )]
+
+    # Return special marker dict to signal persona scope change
+    return content, {"_persona": persona}
+
+
+async def handle_get_persona(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Handle get_persona tool call.
+
+    Note: This handler doesn't have direct access to _session_persona,
+    so the server must pass it differently. For now, we return a message
+    that the persona should be checked via server state.
+    """
+    # The actual persona value is managed by the server
+    # This handler is called for informational purposes
+    content = [TextContent(
+        type="text",
+        text="Use select_persona() to set a persona, or check the server logs for current session persona."
+    )]
+    return content, current_scope
+
+
+async def handle_clear_persona(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Handle clear_persona tool call.
+
+    Args:
+        arguments: Tool arguments (empty for this tool)
+        client: HTTP client (not used for this operation)
+        current_scope: Current project scope (passed through unchanged)
+
+    Returns:
+        Tuple of (response content, persona scope marker with None)
+    """
+    logger.info("Cleared persona")
+
+    content = [TextContent(
+        type="text",
+        text="Persona cleared.\n\n"
+             "Status transitions will no longer include a default persona. "
+             "You can still provide persona explicitly in individual tool calls."
+    )]
+
+    # Return special marker to clear persona
+    return content, {"_persona": None}
+
+
+async def apply_persona_defaults(
+    tool_name: str,
+    arguments: dict,
+    current_persona: Optional[str] = None
+) -> dict:
+    """Apply session persona as default for tools that accept persona.
+
+    Args:
+        tool_name: Name of the tool being called
+        arguments: Tool arguments (may be modified)
+        current_persona: Current session persona
+
+    Returns:
+        Modified arguments with persona defaulted if applicable
+    """
+    # Tools that should use persona as default
+    persona_tools = {
+        "update_requirement",
+        "transition_status",
+    }
+
+    if tool_name not in persona_tools:
+        return arguments
+
+    if current_persona is None:
+        return arguments
+
+    # Only apply default if persona not explicitly provided
+    if "persona" not in arguments:
+        arguments["persona"] = current_persona
+        logger.info(f"Using session persona: {current_persona}")
+
+    return arguments
+
+
+# ============================================================================
 # User Handlers
 # ============================================================================
 

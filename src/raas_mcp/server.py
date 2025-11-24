@@ -46,9 +46,10 @@ else:
 # MCP Server instance
 app = Server("raas-mcp")
 
-# Session state for project scope
+# Session state for project and persona scope
 # This is per-MCP-connection since each connection runs in its own process (stdio mode)
 _session_project_scope: Optional[dict] = None  # Stores {project_id, name, slug, organization_id}
+_session_persona: Optional[str] = None  # Stores persona name (e.g., "developer", "tester")
 
 
 @app.list_tools()
@@ -69,12 +70,15 @@ async def list_tools() -> list[Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageContent | EmbeddedResource]:
     """Handle MCP tool calls by delegating to shared handlers."""
-    global _session_project_scope
+    global _session_project_scope, _session_persona
 
     logger.info(f"Tool call: {name} with arguments: {arguments}")
 
     # Apply project scope defaults to arguments if applicable
     arguments = await handlers.apply_project_scope_defaults(name, arguments, _session_project_scope)
+
+    # Apply persona defaults to arguments if applicable
+    arguments = await handlers.apply_persona_defaults(name, arguments, _session_persona)
 
     # Prepare headers with PAT authentication if available
     headers = {}
@@ -111,6 +115,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "select_project": handlers.handle_select_project,
                 "get_project_scope": handlers.handle_get_project_scope,
                 "clear_project_scope": handlers.handle_clear_project_scope,
+                # Persona scope handlers
+                "select_persona": handlers.handle_select_persona,
+                "get_persona": handlers.handle_get_persona,
+                "clear_persona": handlers.handle_clear_persona,
                 # User handlers
                 "list_users": handlers.handle_list_users,
                 "search_users": handlers.handle_search_users,
@@ -140,12 +148,38 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 logger.warning(f"Unknown tool requested: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
+            # Special case for get_persona - return actual persona value
+            if name == "get_persona":
+                if _session_persona:
+                    return [TextContent(
+                        type="text",
+                        text=f"Current persona: {_session_persona}\n\n"
+                             f"This persona will be used for status transitions unless overridden."
+                    )]
+                else:
+                    return [TextContent(
+                        type="text",
+                        text="No persona is currently set.\n\n"
+                             "Use select_persona(persona='developer') to set a default persona for status transitions."
+                    )]
+
             # Execute handler and get result
-            content, new_scope = await handler(arguments, client, _session_project_scope)
+            # Handlers return (content, scope_update) where scope_update can be:
+            # - dict with project_id: project scope change
+            # - dict with _persona key: persona scope change
+            # - None: no change
+            # - Same as current: no change
+            content, scope_update = await handler(arguments, client, _session_project_scope)
 
             # Update session scope if handler modified it
-            if new_scope is not _session_project_scope:
-                _session_project_scope = new_scope
+            if scope_update is not None and scope_update is not _session_project_scope:
+                # Check if this is a persona scope update
+                if isinstance(scope_update, dict) and "_persona" in scope_update:
+                    _session_persona = scope_update.get("_persona")
+                    logger.info(f"Updated session persona to: {_session_persona}")
+                else:
+                    # Project scope update
+                    _session_project_scope = scope_update
 
             return content
 

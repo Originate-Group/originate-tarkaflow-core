@@ -4,7 +4,7 @@ title: "[Descriptive Guardrail Title]"
 category: security  # security, architecture
 enforcement_level: recommended  # advisory, recommended, mandatory
 applies_to: [epic, component, feature, requirement]  # Which requirement types this applies to
-# NOTE: status, id, and timestamps are system-managed and auto-injected on retrieval
+# NOTE: status defaults to "draft" on creation; id and timestamps are system-managed
 ---
 
 # Guardrail: [Title]

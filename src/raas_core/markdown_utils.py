@@ -174,7 +174,8 @@ def validate_frontmatter(frontmatter: Dict[str, Any], req_type: RequirementType)
         MarkdownParseError: If frontmatter is invalid
     """
     # Required fields for all types
-    required_fields = ["type", "title", "status"]
+    # Note: status defaults to "draft" if not provided (see extract_metadata)
+    required_fields = ["type", "title"]
 
     # parent_id required for non-epic types
     if req_type != RequirementType.EPIC:

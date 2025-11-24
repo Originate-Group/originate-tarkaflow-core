@@ -636,6 +636,74 @@ def get_tools() -> list[Tool]:
             }
         ),
         # ============================================================================
+        # Persona Scope Tools
+        # ============================================================================
+        Tool(
+            name="select_persona",
+            description="Set a default workflow persona for this session's status transitions. "
+                       "\n\nWHY USE THIS:"
+                       "\n• Eliminates repetitive persona parameter in transition_status, update_requirement"
+                       "\n• Ensures consistent persona declaration across all transitions"
+                       "\n• Audit trail shows persona for compliance"
+                       "\n\nPERSONA AUTHORIZATION:"
+                       "\n• Different transitions require different personas"
+                       "\n• Developer: draft→review, in_progress→implemented"
+                       "\n• Tester: implemented→validated (prevents self-validation)"
+                       "\n• Release Manager: validated→deployed"
+                       "\n• Product Owner: review→approved"
+                       "\n• Enterprise Architect: all transitions (governance override)"
+                       "\n\nCOMMON PATTERNS:"
+                       "\n• Start of session: select_persona(persona='developer') → work normally"
+                       "\n• Switch roles: select_persona(persona='tester') → now authorized for validation"
+                       "\n• Override per-call: transition_status(..., persona='tester') → uses 'tester' for this call only"
+                       "\n\nRETURNS: Confirmation of persona set"
+                       "\n\nRELATED TOOLS:"
+                       "\n• get_persona() to check current persona"
+                       "\n• clear_persona() to remove default"
+                       "\n• transition_status() and update_requirement() use this as default",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "persona": {
+                        "type": "string",
+                        "enum": ["enterprise_architect", "product_owner", "scrum_master", "developer", "tester", "release_manager"],
+                        "description": "The workflow persona to use for status transitions"
+                    }
+                },
+                "required": ["persona"]
+            }
+        ),
+        Tool(
+            name="get_persona",
+            description="Query the current persona setting for this session. "
+                       "\n\nWHEN TO USE:"
+                       "\n• Verify persona is set before making transitions"
+                       "\n• Check which persona will be used for audit logging"
+                       "\n\nRETURNS:"
+                       "\n• Current persona name if set"
+                       "\n• Message indicating no persona set otherwise",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="clear_persona",
+            description="Clear the persona setting for this session. "
+                       "\n\nWHEN TO USE:"
+                       "\n• When you want to require explicit persona per transition"
+                       "\n• Before switching to a different persona (optional, select_persona replaces automatically)"
+                       "\n\nEFFECT:"
+                       "\n• Removes default persona from session"
+                       "\n• transition_status() and update_requirement() will not have a default persona"
+                       "\n• Can still pass persona explicitly in individual calls"
+                       "\n\nRETURNS: Confirmation that persona was cleared",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        # ============================================================================
         # Requirement Tools
         # ============================================================================
         Tool(
@@ -726,11 +794,6 @@ def get_tools() -> list[Tool]:
                     },
                     "parent_id": {
                         "type": "string",
-                        "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed"],
                         "description": "DEPRECATED: Use content field instead. This is specified in markdown frontmatter."
                     },
                     "tags": {
