@@ -119,6 +119,28 @@ async def update_guardrail(
         )
 
 
+@router.delete("/{guardrail_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_guardrail(
+    guardrail_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a guardrail by UUID or human-readable ID.
+
+    Supports both UUID (e.g., 'a1b2c3d4-...') and human-readable ID
+    (e.g., 'GUARD-SEC-001', case-insensitive).
+
+    Returns 204 No Content on success, 404 if not found.
+    """
+    success = crud.delete_guardrail(db, guardrail_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guardrail not found: {guardrail_id}",
+        )
+    logger.info(f"Deleted guardrail {guardrail_id}")
+
+
 @router.get("/", response_model=schemas.GuardrailListResponse)
 async def list_guardrails(
     page: int = Query(1, ge=1, description="Page number"),

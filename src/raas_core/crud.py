@@ -1869,6 +1869,27 @@ def update_guardrail(
     return db_guardrail
 
 
+def delete_guardrail(db: Session, guardrail_id: str) -> bool:
+    """
+    Delete a guardrail.
+
+    Args:
+        db: Database session
+        guardrail_id: UUID or human-readable ID
+
+    Returns:
+        True if deleted, False if not found
+    """
+    db_guardrail = get_guardrail(db, guardrail_id)
+    if not db_guardrail:
+        return False
+
+    db.delete(db_guardrail)
+    db.commit()
+    logger.info(f"Deleted guardrail {guardrail_id}")
+    return True
+
+
 def list_guardrails(
     db: Session,
     organization_id: Optional[UUID] = None,
