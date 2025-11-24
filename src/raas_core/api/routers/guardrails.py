@@ -105,7 +105,7 @@ async def update_guardrail(
     try:
         updated_guardrail = crud.update_guardrail(
             db=db,
-            guardrail_id=existing.id,
+            guardrail_id=str(existing.id),
             content=guardrail_update.content,
             user_id=None,  # Solo mode - no user
         )
