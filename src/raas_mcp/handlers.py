@@ -1269,7 +1269,11 @@ async def handle_list_change_requests(
     params = {}
     for key in ["organization_id", "status", "page", "page_size"]:
         if key in arguments and arguments[key] is not None:
-            params[key] = arguments[key]
+            value = arguments[key]
+            # Normalize enum values to lowercase
+            if key == "status" and isinstance(value, str):
+                value = value.lower()
+            params[key] = value
 
     response = await client.get("/change-requests/", params=params)
     response.raise_for_status()
@@ -1304,6 +1308,9 @@ async def handle_transition_change_request(
     """Transition a change request to a new status."""
     cr_id = arguments["cr_id"]
     new_status = arguments["new_status"]
+    # Normalize enum value to lowercase
+    if isinstance(new_status, str):
+        new_status = new_status.lower()
 
     response = await client.post(
         f"/change-requests/{cr_id}/transition",
@@ -1394,6 +1401,10 @@ async def handle_create_task(
     current_scope: Optional[dict] = None
 ) -> tuple[list[TextContent], Optional[dict]]:
     """Create a new task in the task queue."""
+    # Normalize enum values to lowercase
+    for key in ['status', 'task_type', 'priority']:
+        if key in arguments and isinstance(arguments[key], str):
+            arguments[key] = arguments[key].lower()
     response = await client.post("/tasks/", json=arguments)
     response.raise_for_status()
     result = response.json()
@@ -1410,10 +1421,16 @@ async def handle_list_tasks(
 ) -> tuple[list[TextContent], Optional[dict]]:
     """List tasks with filtering and pagination."""
     params = {}
+    # Enum fields that need lowercase normalization
+    enum_fields = {'status', 'task_type', 'priority'}
     for key in ['organization_id', 'project_id', 'assignee_id', 'status', 'task_type',
                 'priority', 'overdue_only', 'include_completed', 'page', 'page_size']:
         if key in arguments and arguments[key] is not None:
-            params[key] = arguments[key]
+            value = arguments[key]
+            # Normalize enum values to lowercase
+            if key in enum_fields and isinstance(value, str):
+                value = value.lower()
+            params[key] = value
 
     response = await client.get("/tasks/", params=params)
     response.raise_for_status()
@@ -1461,6 +1478,10 @@ async def handle_update_task(
 ) -> tuple[list[TextContent], Optional[dict]]:
     """Update a task's fields."""
     task_id = arguments.pop("task_id")
+    # Normalize enum values to lowercase
+    for key in ['status', 'task_type', 'priority']:
+        if key in arguments and isinstance(arguments[key], str):
+            arguments[key] = arguments[key].lower()
     response = await client.patch(f"/tasks/{task_id}", json=arguments)
     response.raise_for_status()
     result = response.json()
