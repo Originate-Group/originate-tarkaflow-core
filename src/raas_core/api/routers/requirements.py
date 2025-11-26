@@ -138,6 +138,7 @@ def create_requirement(
 
 @router.get("/", response_model=schemas.RequirementListResponse)
 def list_requirements(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     type: Optional[models.RequirementType] = Query(None, description="Filter by type"),
@@ -155,6 +156,9 @@ def list_requirements(
     """
     List requirements with optional filtering and pagination.
 
+    In team mode, only returns requirements from projects in organizations
+    where the user is a member.
+
     - **page**: Page number (starts at 1)
     - **page_size**: Number of items per page (1-100)
     - **type**: Filter by requirement type
@@ -166,6 +170,23 @@ def list_requirements(
     - **tags**: Filter by tags (AND logic - requirement must have ALL specified tags)
     - **include_deployed**: Include deployed items (default: false, deployed items are excluded)
     """
+    # Get current user for organization-based filtering in team mode
+    current_user = get_current_user_optional(request)
+
+    # Get user's organization IDs for filtering (None means no filtering in solo mode)
+    organization_ids = None
+    if current_user:
+        organization_ids = crud.get_user_organization_ids(db, current_user.id)
+        if not organization_ids:
+            # User has no organization memberships - return empty results
+            return schemas.RequirementListResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
+
     skip = (page - 1) * page_size
     requirements, total = crud.get_requirements(
         db=db,
@@ -177,7 +198,7 @@ def list_requirements(
         parent_id=parent_id,
         search=search,
         tags=tags,
-        organization_ids=None,  # Solo mode - no org filtering
+        organization_ids=organization_ids,
         project_id=project_id,
         include_deployed=include_deployed,
         ready_to_implement=ready_to_implement,
@@ -193,13 +214,49 @@ def list_requirements(
     )
 
 
+def _check_requirement_access(
+    request: Request,
+    requirement: models.Requirement,
+    db: Session,
+) -> None:
+    """
+    Check if current user has access to a requirement via organization membership.
+
+    In team mode, user must be a member of the requirement's organization.
+    In solo mode (current_user is None), access is always granted.
+
+    Raises:
+        HTTPException: 403 if user doesn't have access
+    """
+    current_user = get_current_user_optional(request)
+    if current_user:
+        organization_ids = crud.get_user_organization_ids(db, current_user.id)
+        if requirement.organization_id not in organization_ids:
+            logger.warning(
+                f"User {current_user.id} denied access to requirement {requirement.id} "
+                f"(org {requirement.organization_id} not in user's orgs)"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "permission_denied",
+                    "message": "You don't have access to this requirement. "
+                               "You must be a member of the requirement's organization.",
+                    "resource_type": "requirement",
+                }
+            )
+
+
 @router.get("/{requirement_id}", response_model=schemas.RequirementResponse)
 def get_requirement(
     requirement_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Get a specific requirement by ID.
+
+    In team mode, requires membership in the requirement's organization.
 
     Supports both UUID and human-readable ID formats:
     - UUID: afa92d5c-e008-44d6-b2cf-ccacd81481d6
@@ -213,6 +270,9 @@ def get_requirement(
             logger.warning(f"Requirement not found: {requirement_id}")
             raise HTTPException(status_code=404, detail=f"Requirement not found: {requirement_id}")
 
+        # Check organization membership in team mode
+        _check_requirement_access(request, requirement, db)
+
         logger.debug(f"Successfully retrieved requirement {requirement_id}")
         return requirement
     except HTTPException:
@@ -225,10 +285,13 @@ def get_requirement(
 @router.get("/{requirement_id}/children", response_model=list[schemas.RequirementListItem])
 def get_requirement_children(
     requirement_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Get all children of a requirement (lightweight, no content field).
+
+    In team mode, requires membership in the requirement's organization.
 
     Supports both UUID and human-readable ID formats:
     - UUID: afa92d5c-e008-44d6-b2cf-ccacd81481d6
@@ -242,17 +305,23 @@ def get_requirement_children(
     if not requirement:
         raise HTTPException(status_code=404, detail=f"Requirement not found: {requirement_id}")
 
+    # Check organization membership in team mode
+    _check_requirement_access(request, requirement, db)
+
     return crud.get_requirement_children(db, requirement.id)
 
 
 @router.get("/{requirement_id}/history", response_model=list[schemas.RequirementHistoryResponse])
 def get_requirement_history(
     requirement_id: str,
+    request: Request,
     limit: int = Query(50, ge=1, le=100, description="Maximum number of history entries"),
     db: Session = Depends(get_db),
 ):
     """
     Get change history for a requirement.
+
+    In team mode, requires membership in the requirement's organization.
 
     Supports both UUID and human-readable ID formats.
 
@@ -262,6 +331,9 @@ def get_requirement_history(
     requirement = crud.get_requirement_by_any_id(db, requirement_id)
     if not requirement:
         raise HTTPException(status_code=404, detail=f"Requirement not found: {requirement_id}")
+
+    # Check organization membership in team mode
+    _check_requirement_access(request, requirement, db)
 
     return crud.get_requirement_history(db, requirement.id, limit)
 
@@ -281,6 +353,8 @@ def update_requirement(
     """
     Update a requirement.
 
+    In team mode, requires membership in the requirement's organization.
+
     Supports both UUID and human-readable ID formats.
 
     - **requirement_id**: UUID or human-readable ID of the requirement
@@ -293,6 +367,9 @@ def update_requirement(
     existing = crud.get_requirement_by_any_id(db, requirement_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Requirement not found: {requirement_id}")
+
+    # Check organization membership in team mode
+    _check_requirement_access(request, existing, db)
 
     # Get current user (for permission checking in team mode, None in solo mode)
     current_user = get_current_user_optional(request)
@@ -350,6 +427,8 @@ def delete_requirement(
     """
     Delete a requirement.
 
+    In team mode, requires membership in the requirement's organization.
+
     Supports both UUID and human-readable ID formats.
 
     Note: This will cascade delete all children requirements.
@@ -360,6 +439,9 @@ def delete_requirement(
     existing = crud.get_requirement_by_any_id(db, requirement_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Requirement not found: {requirement_id}")
+
+    # Check organization membership in team mode
+    _check_requirement_access(request, existing, db)
 
     # Get current user (for permission checking in team mode, None in solo mode)
     current_user = get_current_user_optional(request)

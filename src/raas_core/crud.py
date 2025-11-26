@@ -1146,6 +1146,30 @@ def get_organization_members(
     )
 
 
+def get_user_organization_ids(
+    db: Session,
+    user_id: UUID,
+) -> list[UUID]:
+    """
+    Get list of organization IDs where user is a member.
+
+    Used for filtering requirements/projects by organization membership.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+
+    Returns:
+        List of organization UUIDs where user is a member
+    """
+    memberships = (
+        db.query(models.OrganizationMember.organization_id)
+        .filter(models.OrganizationMember.user_id == user_id)
+        .all()
+    )
+    return [m.organization_id for m in memberships]
+
+
 def update_organization_member_role(
     db: Session,
     organization_id: UUID,
