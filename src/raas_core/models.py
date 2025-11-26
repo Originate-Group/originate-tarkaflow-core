@@ -805,9 +805,12 @@ class Task(Base):
     completer = relationship("User", foreign_keys=[completed_by])
 
     # Many-to-many relationship with users via task_assignees
+    # Need to specify foreign_keys because task_assignees has multiple FK to users
     assignees = relationship(
         "User",
         secondary=task_assignees,
+        primaryjoin="Task.id == task_assignees.c.task_id",
+        secondaryjoin="User.id == task_assignees.c.user_id",
         backref="assigned_tasks"
     )
 
