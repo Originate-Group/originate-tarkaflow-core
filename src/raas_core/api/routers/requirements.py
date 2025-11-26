@@ -392,6 +392,7 @@ def update_requirement(
             )
 
     # Validate Change Request if requirement is past review status (RAAS-FEAT-078)
+    # Note: Status-only updates are exempt from CR requirement (governed by persona workflow)
     validated_cr = None
     try:
         validated_cr = crud.validate_change_request_for_update(
@@ -399,6 +400,7 @@ def update_requirement(
             requirement_id=existing.id,
             change_request_id=requirement_update.change_request_id,
             organization_id=existing.organization_id,
+            update_data=requirement_update,
         )
     except ValueError as e:
         error_message = str(e)

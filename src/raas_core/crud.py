@@ -2445,19 +2445,25 @@ def validate_change_request_for_update(
     requirement_id: UUID,
     change_request_id: Optional[str],
     organization_id: UUID,
+    update_data: Optional["schemas.RequirementUpdate"] = None,
 ) -> Optional[models.ChangeRequest]:
     """
     Validate CR requirement based on requirement status (RAAS-FEAT-078).
 
     For requirements in draft/review status, no CR is required.
-    For requirements in approved+ status, an approved CR is required and
-    the requirement must be in the CR's affects list.
+    For requirements in approved+ status, an approved CR is required for CONTENT changes.
+
+    IMPORTANT: Status-only transitions do NOT require a CR - they are governed by
+    persona-based workflow authorization instead. This allows normal lifecycle
+    progression (approved -> in_progress -> implemented -> validated -> deployed)
+    without bureaucratic overhead.
 
     Args:
         db: Database session
         requirement_id: UUID of the requirement being updated
         change_request_id: UUID or human-readable ID of the change request (e.g., 'CR-001')
         organization_id: UUID of the organization
+        update_data: The update payload (used to check if this is a status-only update)
 
     Returns:
         The validated ChangeRequest if CR is required and valid, None otherwise
@@ -2476,7 +2482,22 @@ def validate_change_request_for_update(
         logger.debug(f"Requirement {requirement_id} in {requirement.status.value} status - CR not required")
         return None
 
-    # Approved+ requirements need CR
+    # Check if this is a status-only update (exempt from CR requirement)
+    # Status transitions are governed by persona-based workflow, not CRs
+    if update_data is not None:
+        is_status_only = (
+            update_data.status is not None and
+            update_data.content is None and
+            update_data.tags is None and
+            update_data.depends_on is None and
+            update_data.adheres_to is None and
+            update_data.title is None  # Legacy field
+        )
+        if is_status_only:
+            logger.debug(f"Requirement {requirement_id}: status-only update - CR not required")
+            return None
+
+    # Approved+ requirements need CR for content changes
     if not change_request_id:
         raise ValueError(
             f"Change request required: Requirement {requirement.human_readable_id or requirement_id} is in "
