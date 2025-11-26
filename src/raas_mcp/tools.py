@@ -91,21 +91,7 @@ def get_tools() -> list[Tool]:
                 "required": ["organization_id"]
             }
         ),
-        Tool(
-            name="delete_organization",
-            description="Delete an organization and all its data (cascading delete). "
-                       "Only organization owners can delete an organization. Use with caution!",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {
-                        "type": "string",
-                        "description": "UUID of the organization to delete"
-                    }
-                },
-                "required": ["organization_id"]
-            }
-        ),
+        # NOTE: delete_organization removed from MCP - use API directly for destructive operations
         # ============================================================================
         # Organization Member Tools
         # ============================================================================
@@ -171,25 +157,7 @@ def get_tools() -> list[Tool]:
                 "required": ["organization_id", "user_id", "role"]
             }
         ),
-        Tool(
-            name="remove_organization_member",
-            description="Remove a user from an organization. "
-                       "Only organization admins and owners can remove members.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {
-                        "type": "string",
-                        "description": "UUID of the organization"
-                    },
-                    "user_id": {
-                        "type": "string",
-                        "description": "UUID of the user to remove"
-                    }
-                },
-                "required": ["organization_id", "user_id"]
-            }
-        ),
+        # NOTE: delete_organization_member removed from MCP - use API directly for destructive operations
         # ============================================================================
         # Project Tools
         # ============================================================================
@@ -342,21 +310,7 @@ def get_tools() -> list[Tool]:
                 "required": ["project_id"]
             }
         ),
-        Tool(
-            name="delete_project",
-            description="Delete a project and all its requirements (cascading delete). "
-                       "Only project admins and organization owners can delete projects. Use with caution!",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_id": {
-                        "type": "string",
-                        "description": "UUID of the project to delete"
-                    }
-                },
-                "required": ["project_id"]
-            }
-        ),
+        # NOTE: delete_project removed from MCP - use API directly for destructive operations
         Tool(
             name="list_project_members",
             description="List all members of a project with their roles.",
@@ -419,25 +373,7 @@ def get_tools() -> list[Tool]:
                 "required": ["project_id", "user_id", "role"]
             }
         ),
-        Tool(
-            name="remove_project_member",
-            description="Remove a user from a project. "
-                       "Only project admins and organization admins can remove members.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_id": {
-                        "type": "string",
-                        "description": "UUID of the project"
-                    },
-                    "user_id": {
-                        "type": "string",
-                        "description": "UUID of the user to remove"
-                    }
-                },
-                "required": ["project_id", "user_id"]
-            }
-        ),
+        # NOTE: delete_project_member removed from MCP - use API directly for destructive operations
         # ============================================================================
         # User Tools
         # ============================================================================
@@ -838,7 +774,7 @@ def get_tools() -> list[Tool]:
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed"],
+                        "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed", "deprecated"],
                         "description": "Filter by lifecycle status"
                     },
                     "parent_id": {
@@ -868,6 +804,11 @@ def get_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Filter for requirements that depend on the specified requirement UUID. "
                                      "Use this to see what work would be unblocked if a specific requirement is completed."
+                    },
+                    "include_deprecated": {
+                        "type": "boolean",
+                        "description": "Include deprecated requirements in results (default: false). "
+                                     "Deprecated requirements are excluded by default."
                     },
                     "page": {
                         "type": "integer",
@@ -930,6 +871,8 @@ def get_tools() -> list[Tool]:
                        "\n2. DEPENDENCY UPDATE (simpler, no markdown needed):"
                        "\n   a) Pass depends_on=[...] with array of requirement UUIDs or human-readable IDs"
                        "\n   b) Use empty array [] to clear all dependencies"
+                       "\n\nIMPORTANT: For requirements in approved+ status, a change_request_id is required. "
+                       "Draft and review status requirements can be updated without a CR."
                        "\n\nRETURNS: Updated requirement object with all fields"
                        "\n\nRELATED TOOLS:"
                        "\n• Use get_requirement() first to fetch current content"
@@ -942,6 +885,7 @@ def get_tools() -> list[Tool]:
                        "\n• 400: Circular dependency detected"
                        "\n• 400: Dependency requirement not found or not in same project"
                        "\n• 403: Forbidden (no permission to update)"
+                       "\n• 403: Change request required (for approved+ requirements without valid CR)"
                        "\n\nNOTE: Status changes via markdown frontmatter follow state machine rules (see transition_status for details)."
                        "\n\nREMINDER: Keep requirements outcome-focused (what/why), not prescriptive (how).",
             inputSchema={
@@ -964,6 +908,13 @@ def get_tools() -> list[Tool]:
                                      "Dependencies must be valid requirements in the same project. "
                                      "Circular dependencies are rejected. "
                                      "Example: ['uuid1', 'uuid2'] or use human-readable IDs: ['RAAS-FEAT-001', 'RAAS-REQ-042']"
+                    },
+                    "change_request_id": {
+                        "type": "string",
+                        "description": "OPTIONAL: Change request UUID or human-readable ID (e.g., 'CR-001'). "
+                                     "REQUIRED for requirements in approved+ status. Draft and review status requirements "
+                                     "can be updated without a CR. The CR must be in 'approved' status and the requirement "
+                                     "must be in the CR's affects list."
                     },
                     "title": {
                         "type": "string",
@@ -988,37 +939,8 @@ def get_tools() -> list[Tool]:
                 "required": ["requirement_id"]
             }
         ),
-        Tool(
-            name="delete_requirement",
-            description="Delete a requirement and ALL its children recursively (cascading delete, permanent). "
-                       "Accepts both UUID and human-readable ID. "
-                       "\n\nWARNING: This operation is PERMANENT and cascades to all descendants!"
-                       "\n\nCOMMON PATTERNS:"
-                       "\n• Check children first: get_requirement_children() → verify → delete_requirement()"
-                       "\n• Delete leaf requirement: delete_requirement() (safe, no children)"
-                       "\n• Delete subtree: delete_requirement(epic_id) deletes epic + all components + all features + all requirements"
-                       "\n\nWHAT GETS DELETED:"
-                       "\n• The specified requirement"
-                       "\n• ALL child requirements recursively"
-                       "\n• ALL dependency references pointing to deleted requirements"
-                       "\n\nRETURNS: Success confirmation"
-                       "\n\nRELATED TOOLS:"
-                       "\n• Use get_requirement_children() to preview what will be deleted"
-                       "\n• Use list_requirements(parent_id='...') to see full subtree"
-                       "\n\nERRORS:"
-                       "\n• 404: Requirement not found"
-                       "\n• 403: Forbidden (no permission to delete)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "requirement_id": {
-                        "type": "string",
-                        "description": "UUID or human-readable ID of the requirement to delete"
-                    }
-                },
-                "required": ["requirement_id"]
-            }
-        ),
+        # NOTE: delete_requirement removed from MCP - use API directly for destructive operations
+        # For soft retirement, use transition_status to move requirement to 'deprecated' status
         Tool(
             name="get_requirement_children",
             description="Get all direct children of a requirement (lightweight, excludes full markdown content). "
@@ -1094,6 +1016,7 @@ def get_tools() -> list[Tool]:
                        "\n• Can move backward 1+ steps (e.g., review → draft, approved → draft)"
                        "\n• CANNOT skip steps (e.g., draft → approved is blocked, must go draft → review → approved)"
                        "\n• deployed is terminal (cannot transition out, create new requirement instead)"
+                       "\n• deprecated is terminal (soft retirement - can transition TO deprecated from any status except draft)"
                        "\n• Same-status transitions allowed (no-op)"
                        "\n\nPERSONA AUTHORIZATION:"
                        "\n• Different transitions require different personas (set via select_persona)"
@@ -1119,7 +1042,7 @@ def get_tools() -> list[Tool]:
                        "\n• 403: Persona not authorized for this transition"
                        "\n• 404: Requirement not found"
                        "\n• 400: Invalid state transition (e.g., draft → approved without review)"
-                       "\n• 400: Invalid status value (not one of 7 valid statuses)",
+                       "\n• 400: Invalid status value (not one of 8 valid statuses)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1129,7 +1052,7 @@ def get_tools() -> list[Tool]:
                     },
                     "new_status": {
                         "type": "string",
-                        "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed"],
+                        "enum": ["draft", "review", "approved", "in_progress", "implemented", "validated", "deployed", "deprecated"],
                         "description": "Target status"
                     }
                 },
@@ -1305,6 +1228,427 @@ def get_tools() -> list[Tool]:
                         "description": "Items per page (default: 50)"
                     }
                 }
+            }
+        ),
+        # ============================================================================
+        # Change Request Tools (RAAS-COMP-068)
+        # ============================================================================
+        Tool(
+            name="create_change_request",
+            description="Create a new change request with justification and affected requirements. "
+                       "\n\nChange Requests (CR) gate updates to requirements that have passed review status. "
+                       "This ensures traceability and controlled changes in production systems."
+                       "\n\nWORKFLOW:"
+                       "\n1. Create CR with justification + affects list (which requirements you intend to modify)"
+                       "\n2. Submit for review: transition_change_request(new_status='review')"
+                       "\n3. Get approval: transition_change_request(new_status='approved')"
+                       "\n4. Use the approved CR to update requirements (change_request_id parameter)"
+                       "\n5. Complete: complete_change_request() when done"
+                       "\n\nRETURNS: Created change request with human-readable ID (e.g., CR-001)"
+                       "\n\nRELATED TOOLS:"
+                       "\n• list_requirements() to find requirement IDs for affects list"
+                       "\n• transition_change_request() to move CR through lifecycle"
+                       "\n• update_requirement() with change_request_id to make changes"
+                       "\n\nERRORS:"
+                       "\n• 400: Justification too short (min 10 chars)"
+                       "\n• 400: Empty affects list"
+                       "\n• 400: Requirement not found in affects list"
+                       "\n• 403: Forbidden (must be org member)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Organization UUID"
+                    },
+                    "justification": {
+                        "type": "string",
+                        "description": "Justification for the change (minimum 10 characters)"
+                    },
+                    "affects": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of requirement UUIDs this CR will modify"
+                    }
+                },
+                "required": ["organization_id", "justification", "affects"]
+            }
+        ),
+        Tool(
+            name="get_change_request",
+            description="Get a change request by UUID or human-readable ID. "
+                       "\n\nAccepts both UUID (e.g., 'a1b2c3d4-...') and human-readable ID "
+                       "(e.g., 'CR-001', case-insensitive)."
+                       "\n\nRETURNS: Full change request details including:"
+                       "\n• justification and status"
+                       "\n• requestor and approver info"
+                       "\n• affects list (requirements in scope)"
+                       "\n• modifications count (requirements actually changed)"
+                       "\n• approval and completion timestamps"
+                       "\n\nERRORS:"
+                       "\n• 404: Change request not found"
+                       "\n• 403: Forbidden (not a member of CR's organization)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "cr_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID (e.g., 'CR-001') of the change request"
+                    }
+                },
+                "required": ["cr_id"]
+            }
+        ),
+        Tool(
+            name="list_change_requests",
+            description="List and filter change requests with pagination. "
+                       "\n\nFILTERS:"
+                       "\n• organization_id: Filter by organization UUID"
+                       "\n• status: Filter by status (draft, review, approved, completed)"
+                       "\n\nRETURNS: Paginated list with lightweight items"
+                       "\n• Each item includes: id, human_readable_id, justification, status, timestamps, counts"
+                       "\n• Use get_change_request() for full details"
+                       "\n\nCOMMON PATTERNS:"
+                       "\n• Find approved CRs: list_change_requests(status='approved')"
+                       "\n• Find pending reviews: list_change_requests(status='review')",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Filter by organization UUID (optional)"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["draft", "review", "approved", "completed"],
+                        "description": "Filter by status (optional)"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (default: 1)"
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Items per page (default: 50)"
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="transition_change_request",
+            description="Transition a change request to a new status. "
+                       "\n\nCR LIFECYCLE: draft -> review -> approved -> completed"
+                       "\n\nVALID TRANSITIONS:"
+                       "\n• draft -> review (submit for review)"
+                       "\n• review -> approved (approve the CR)"
+                       "\n• review -> draft (send back for revision)"
+                       "\n• approved -> completed (mark as done)"
+                       "\n\nAPPROVAL TRACKING:"
+                       "\n• Moving to 'approved' records approved_at and approved_by"
+                       "\n• Moving to 'completed' records completed_at"
+                       "\n\nPERMISSIONS:"
+                       "\n• Approval requires admin role"
+                       "\n• Other transitions require member role"
+                       "\n\nERRORS:"
+                       "\n• 404: Change request not found"
+                       "\n• 400: Invalid transition"
+                       "\n• 403: Forbidden (insufficient permissions)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "cr_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the change request"
+                    },
+                    "new_status": {
+                        "type": "string",
+                        "enum": ["draft", "review", "approved", "completed"],
+                        "description": "Target status"
+                    }
+                },
+                "required": ["cr_id", "new_status"]
+            }
+        ),
+        Tool(
+            name="complete_change_request",
+            description="Mark an approved change request as completed. "
+                       "\n\nThe CR must be in 'approved' status. This action:"
+                       "\n• Sets status to 'completed'"
+                       "\n• Sets completed_at timestamp"
+                       "\n\nAfter completion, the CR cannot be modified or used for further updates. "
+                       "This is a convenience tool - equivalent to transition_change_request(new_status='completed')."
+                       "\n\nERRORS:"
+                       "\n• 404: Change request not found"
+                       "\n• 400: CR not in approved status"
+                       "\n• 403: Forbidden (must be org member)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "cr_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the change request"
+                    }
+                },
+                "required": ["cr_id"]
+            }
+        ),
+
+        # ============================================================================
+        # Task Queue Tools (RAAS-EPIC-027, RAAS-COMP-065)
+        # ============================================================================
+
+        Tool(
+            name="create_task",
+            description="Create a new task in the task queue. "
+                       "\n\nTasks represent actionable items that need user attention. They can be created "
+                       "directly or generated by task sources (clarification points, review requests, etc.)."
+                       "\n\nREQUIRED FIELDS:"
+                       "\n• organization_id: Organization UUID"
+                       "\n• title: Task title"
+                       "\n• task_type: Type of task (clarification, review, approval, gap_resolution, custom)"
+                       "\n\nOPTIONAL FIELDS:"
+                       "\n• project_id: Project UUID (for project-scoped tasks)"
+                       "\n• description: Detailed description"
+                       "\n• priority: low, medium (default), high, critical"
+                       "\n• due_date: ISO 8601 datetime"
+                       "\n• assignee_ids: List of user UUIDs to assign"
+                       "\n• source_type, source_id: Link to source artifact"
+                       "\n\nRETURNS: Created task with generated TASK-### ID",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Organization UUID"
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Project UUID (optional, for project-scoped tasks)"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Task title (required)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Task description (optional)"
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "enum": ["clarification", "review", "approval", "gap_resolution", "custom"],
+                        "description": "Type of task (required)"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Priority level (default: medium)"
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "description": "Due date in ISO 8601 format (optional)"
+                    },
+                    "assignee_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of user UUIDs to assign (optional)"
+                    },
+                    "source_type": {
+                        "type": "string",
+                        "description": "Source system type (requirement, guardrail, etc.)"
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "description": "Source artifact UUID"
+                    }
+                },
+                "required": ["organization_id", "title", "task_type"]
+            }
+        ),
+        Tool(
+            name="list_tasks",
+            description="List tasks with filtering and pagination. "
+                       "\n\nBy default, completed and cancelled tasks are excluded."
+                       "\n\nFILTERS:"
+                       "\n• organization_id: Filter by organization"
+                       "\n• project_id: Filter by project"
+                       "\n• assignee_id: Filter by assigned user"
+                       "\n• status: pending, in_progress, completed, deferred, cancelled"
+                       "\n• task_type: clarification, review, approval, gap_resolution, custom"
+                       "\n• priority: low, medium, high, critical"
+                       "\n• overdue_only: Only return overdue tasks"
+                       "\n• include_completed: Include completed/cancelled tasks"
+                       "\n\nORDERING: Priority (critical first) → due_date (earliest) → created_at (newest)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Filter by organization UUID"
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Filter by project UUID"
+                    },
+                    "assignee_id": {
+                        "type": "string",
+                        "description": "Filter by assigned user UUID"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed", "deferred", "cancelled"],
+                        "description": "Filter by status"
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "enum": ["clarification", "review", "approval", "gap_resolution", "custom"],
+                        "description": "Filter by task type"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Filter by priority"
+                    },
+                    "overdue_only": {
+                        "type": "boolean",
+                        "description": "Only return overdue tasks (default: false)"
+                    },
+                    "include_completed": {
+                        "type": "boolean",
+                        "description": "Include completed/cancelled tasks (default: false)"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (default: 1)"
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Items per page (default: 50, max: 100)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_task",
+            description="Get a specific task by ID. "
+                       "\n\nAccepts both UUID and human-readable ID (e.g., 'TASK-001', case-insensitive)."
+                       "\n\nRETURNS: Full task details including assignees, source linking, and timestamps.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the task"
+                    }
+                },
+                "required": ["task_id"]
+            }
+        ),
+        Tool(
+            name="update_task",
+            description="Update a task's title, description, status, priority, or due date. "
+                       "\n\nFor assignment changes, use assign_task instead."
+                       "\n\nUPDATABLE FIELDS:"
+                       "\n• title: New title"
+                       "\n• description: New description"
+                       "\n• status: pending, in_progress, completed, deferred, cancelled"
+                       "\n• priority: low, medium, high, critical"
+                       "\n• due_date: New due date (ISO 8601)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the task"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "New title (optional)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "New description (optional)"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed", "deferred", "cancelled"],
+                        "description": "New status (optional)"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "New priority (optional)"
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "description": "New due date in ISO 8601 format (optional)"
+                    }
+                },
+                "required": ["task_id"]
+            }
+        ),
+        Tool(
+            name="assign_task",
+            description="Assign users to a task. "
+                       "\n\nCan add to existing assignees or replace all assignees."
+                       "\n\nPARAMETERS:"
+                       "\n• task_id: Task to assign"
+                       "\n• assignee_ids: List of user UUIDs to assign"
+                       "\n• replace: If true, replaces all existing assignees; if false (default), adds to existing",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the task"
+                    },
+                    "assignee_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of user UUIDs to assign"
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "If true, replaces all existing assignees (default: false)"
+                    }
+                },
+                "required": ["task_id", "assignee_ids"]
+            }
+        ),
+        Tool(
+            name="complete_task",
+            description="Mark a task as completed. "
+                       "\n\nThis is a convenience tool equivalent to update_task(status='completed')."
+                       "\n\nERRORS:"
+                       "\n• 404: Task not found"
+                       "\n• 400: Task already completed or cancelled",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "UUID or human-readable ID of the task"
+                    }
+                },
+                "required": ["task_id"]
+            }
+        ),
+        Tool(
+            name="get_my_tasks",
+            description="Get all tasks assigned to you. "
+                       "\n\nReturns tasks across all organizations and projects where you are assigned. "
+                       "By default, excludes completed and cancelled tasks."
+                       "\n\nThis is the primary tool for 'what needs my attention?' queries."
+                       "\n\nORDERING: Priority (critical first) → due_date (earliest) → created_at (newest)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_completed": {
+                        "type": "boolean",
+                        "description": "Include completed/cancelled tasks (default: false)"
+                    }
+                },
+                "required": []
             }
         ),
     ]

@@ -58,6 +58,7 @@ class LifecycleStatus(str, enum.Enum):
     IMPLEMENTED = "implemented"
     VALIDATED = "validated"
     DEPLOYED = "deployed"
+    DEPRECATED = "deprecated"  # Terminal state for soft retirement (RAAS-FEAT-080)
 
 
 class MemberRole(str, enum.Enum):
@@ -572,3 +573,432 @@ class Guardrail(Base):
 
     def __repr__(self) -> str:
         return f"<Guardrail {self.category.value}: {self.title}>"
+
+
+class ChangeRequestStatus(str, enum.Enum):
+    """Change request lifecycle status enum (RAAS-FEAT-077)."""
+
+    DRAFT = "draft"
+    REVIEW = "review"
+    APPROVED = "approved"
+    COMPLETED = "completed"
+
+
+# Association table for change request affects (declared scope)
+change_request_affects = Table(
+    'change_request_affects',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('change_request_id', UUID(as_uuid=True), ForeignKey('change_requests.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('requirement_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint('change_request_id', 'requirement_id', name='uq_cr_affects_requirement'),
+)
+
+
+# Association table for change request modifications (actual changes)
+change_request_modifications = Table(
+    'change_request_modifications',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('change_request_id', UUID(as_uuid=True), ForeignKey('change_requests.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('requirement_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('modified_at', DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint('change_request_id', 'requirement_id', name='uq_cr_modifications_requirement'),
+)
+
+
+class ChangeRequest(Base):
+    """
+    Change Request model for gated updates to committed requirements (RAAS-COMP-068).
+
+    Change Requests gate updates to requirements that have passed review status.
+    This ensures traceability and controlled changes in production systems.
+
+    Lifecycle: draft -> review -> approved -> completed
+    """
+
+    __tablename__ = "change_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    human_readable_id = Column(String(20), unique=True, nullable=True, index=True)  # e.g., CR-001
+
+    # Content - justification is required
+    justification = Column(Text, nullable=False)
+
+    # Requestor tracking
+    requestor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+
+    # Status - 4-state lifecycle
+    status = Column(
+        Enum(ChangeRequestStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=ChangeRequestStatus.DRAFT,
+        index=True
+    )
+
+    # Audit timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Approval tracking
+    approved_at = Column(DateTime)
+    approved_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Completion tracking
+    completed_at = Column(DateTime)
+
+    # Relationships
+    organization = relationship("Organization")
+    requestor = relationship("User", foreign_keys=[requestor_id])
+    approved_by = relationship("User", foreign_keys=[approved_by_id])
+
+    # Affects list - declared scope of what CR intends to modify (immutable after review)
+    affects = relationship(
+        "Requirement",
+        secondary=change_request_affects,
+        backref="change_requests_affecting"
+    )
+
+    # Modified requirements - actual changes made using this CR (auto-populated)
+    modified_requirements = relationship(
+        "Requirement",
+        secondary=change_request_modifications,
+        backref="change_requests_modifying"
+    )
+
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("length(justification) >= 10", name="cr_justification_min_length"),
+    )
+
+    @property
+    def affects_count(self) -> int:
+        """Count of requirements in declared scope."""
+        return len(self.affects) if self.affects else 0
+
+    @property
+    def modifications_count(self) -> int:
+        """Count of requirements actually modified."""
+        return len(self.modified_requirements) if self.modified_requirements else 0
+
+    def __repr__(self) -> str:
+        return f"<ChangeRequest {self.human_readable_id}: {self.status.value}>"
+
+
+# ============================================================================
+# Task Queue Models (RAAS-EPIC-027, RAAS-COMP-065)
+# ============================================================================
+
+
+class TaskType(str, enum.Enum):
+    """Task type enum for categorizing tasks by origin."""
+
+    CLARIFICATION = "clarification"  # From elicitation/clarification points
+    REVIEW = "review"  # Requirement review assignments
+    APPROVAL = "approval"  # Status transition approvals
+    GAP_RESOLUTION = "gap_resolution"  # From gap analysis
+    CUSTOM = "custom"  # User-created or external tasks
+
+
+class TaskStatus(str, enum.Enum):
+    """Task lifecycle status enum."""
+
+    PENDING = "pending"  # Not yet started
+    IN_PROGRESS = "in_progress"  # Currently being worked on
+    COMPLETED = "completed"  # Successfully finished
+    DEFERRED = "deferred"  # Postponed for later
+    CANCELLED = "cancelled"  # No longer needed
+
+
+class TaskPriority(str, enum.Enum):
+    """Task priority enum."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class TaskChangeType(str, enum.Enum):
+    """Task history change type enum."""
+
+    CREATED = "created"
+    STATUS_CHANGED = "status_changed"
+    ASSIGNED = "assigned"
+    REASSIGNED = "reassigned"
+    UNASSIGNED = "unassigned"
+    PRIORITY_CHANGED = "priority_changed"
+    DUE_DATE_CHANGED = "due_date_changed"
+    COMMENTED = "commented"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+# Association table for task assignees (many-to-many)
+task_assignees = Table(
+    'task_assignees',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('task_id', UUID(as_uuid=True), ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('assigned_at', DateTime, nullable=False, default=datetime.utcnow),
+    Column('assigned_by', UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
+    Column('is_primary', Boolean, nullable=False, default=True),
+    UniqueConstraint('task_id', 'user_id', name='uq_task_assignee'),
+)
+
+
+class Task(Base):
+    """Task entity for unified task queue (RAAS-COMP-065).
+
+    Tasks are first-class RaaS entities that provide a unified view of
+    actionable items for users. Tasks can originate from multiple sources
+    (clarification points, reviews, approvals, gap analysis) but appear
+    in one consistent interface.
+    """
+
+    __tablename__ = "tasks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    human_readable_id = Column(String(20), unique=True, nullable=True)  # e.g., TASK-001
+
+    # Organization and project scope
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,  # Nullable for org-wide tasks
+        index=True
+    )
+
+    # Core task fields
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    task_type = Column(Enum(TaskType), nullable=False)
+    status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True)
+    priority = Column(Enum(TaskPriority), nullable=False, default=TaskPriority.MEDIUM, index=True)
+    due_date = Column(DateTime, nullable=True, index=True)
+
+    # Source artifact linking (bidirectional reference)
+    source_type = Column(String(50), nullable=True)  # 'requirement', 'guardrail', 'clarification', etc.
+    source_id = Column(UUID(as_uuid=True), nullable=True)  # UUID of source artifact
+    source_context = Column(JSONB, nullable=True)  # Additional context from source
+
+    # Audit fields
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Relationships
+    organization = relationship("Organization")
+    project = relationship("Project")
+    creator = relationship("User", foreign_keys=[created_by])
+    completer = relationship("User", foreign_keys=[completed_by])
+
+    # Many-to-many relationship with users via task_assignees
+    assignees = relationship(
+        "User",
+        secondary=task_assignees,
+        backref="assigned_tasks"
+    )
+
+    # History entries
+    history = relationship("TaskHistory", back_populates="task", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Task {self.human_readable_id}: {self.title[:30]}>"
+
+
+class TaskHistory(Base):
+    """Task change history for audit trail (RAAS-COMP-065).
+
+    Records all changes to tasks including status changes, assignments,
+    priority updates, and comments.
+    """
+
+    __tablename__ = "task_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # Change details
+    change_type = Column(Enum(TaskChangeType), nullable=False)
+    field_name = Column(String(50), nullable=True)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    comment = Column(Text, nullable=True)
+
+    # Audit fields
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    changed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # Relationships
+    task = relationship("Task", back_populates="history")
+    user = relationship("User")
+
+    def __repr__(self) -> str:
+        return f"<TaskHistory {self.task_id}: {self.change_type.value}>"
+
+
+# =============================================================================
+# Task Routing Rules (RAAS-COMP-067)
+# =============================================================================
+
+class RoutingRuleScope(str, enum.Enum):
+    """Scope at which a routing rule applies."""
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+
+
+class RoutingRuleMatchType(str, enum.Enum):
+    """Type of criteria for matching tasks to routing rules."""
+    TASK_TYPE = "task_type"           # Match by task type (review, approval, etc.)
+    SOURCE_TYPE = "source_type"       # Match by source type (requirement_review, etc.)
+    PRIORITY = "priority"             # Match by priority level
+    REQUIREMENT_TYPE = "requirement_type"  # Match by requirement type (epic, feature, etc.)
+    TAG = "tag"                       # Match by tag on source artifact
+
+
+class TaskRoutingRule(Base):
+    """Task routing rule configuration (RAAS-COMP-067).
+
+    Defines default assignment rules for tasks based on various criteria.
+    Rules are evaluated in priority order (lower priority number = evaluated first).
+    """
+
+    __tablename__ = "task_routing_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
+    )
+
+    # Rule identification
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+
+    # Rule matching criteria
+    scope = Column(Enum(RoutingRuleScope), nullable=False, default=RoutingRuleScope.ORGANIZATION)
+    match_type = Column(Enum(RoutingRuleMatchType), nullable=False)
+    match_value = Column(String(100), nullable=False)
+
+    # Assignment configuration
+    assignee_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    assignee_role = Column(String(50), nullable=True)  # Role-based assignment
+    fallback_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # Rule priority (lower = evaluated first)
+    priority = Column(Integer, nullable=False, default=100)
+
+    # Status
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Relationships
+    organization = relationship("Organization")
+    project = relationship("Project")
+    assignee = relationship("User", foreign_keys=[assignee_user_id])
+    fallback = relationship("User", foreign_keys=[fallback_user_id])
+    creator = relationship("User", foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f"<TaskRoutingRule {self.name}: {self.match_type.value}={self.match_value}>"
+
+
+class TaskDelegation(Base):
+    """Task delegation record (RAAS-COMP-067).
+
+    Tracks when a task is delegated from one user to another.
+    """
+
+    __tablename__ = "task_delegations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    delegated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    delegated_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    original_assignee = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason = Column(Text, nullable=True)
+    delegated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    task = relationship("Task")
+    delegator = relationship("User", foreign_keys=[delegated_by])
+    delegate = relationship("User", foreign_keys=[delegated_to])
+    original = relationship("User", foreign_keys=[original_assignee])
+
+    def __repr__(self) -> str:
+        return f"<TaskDelegation {self.task_id}: {self.delegated_by} → {self.delegated_to}>"
+
+
+class TaskEscalation(Base):
+    """Task escalation record (RAAS-COMP-067).
+
+    Tracks when a task is escalated due to being unassigned, overdue, or unresponsive.
+    """
+
+    __tablename__ = "task_escalations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    escalated_from = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    escalated_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason = Column(String(50), nullable=False)  # "unassigned", "overdue", "unresponsive", "manual"
+    notes = Column(Text, nullable=True)
+    escalated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    escalated_by_system = Column(Boolean, nullable=False, default=False)
+
+    # Relationships
+    task = relationship("Task")
+    from_user = relationship("User", foreign_keys=[escalated_from])
+    to_user = relationship("User", foreign_keys=[escalated_to])
+
+    def __repr__(self) -> str:
+        return f"<TaskEscalation {self.task_id}: {self.reason}>"

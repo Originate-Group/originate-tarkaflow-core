@@ -118,21 +118,8 @@ async def handle_update_organization(
     return [TextContent(type="text", text=text)], current_scope
 
 
-async def handle_delete_organization(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Delete an organization and all its data (cascading delete).
-
-    Only organization owners can delete an organization. Use with caution!
-    """
-    org_id = arguments["organization_id"]
-    response = await client.delete(f"/organizations/{org_id}")
-    response.raise_for_status()
-    logger.info(f"Successfully deleted organization {org_id}")
-
-    return [TextContent(type="text", text=f"Successfully deleted organization {org_id}")], current_scope
+# NOTE: handle_delete_organization removed from MCP - destructive operations require direct API access
+# See RAAS-FEAT-079: MCP Destructive Operation Removal
 
 
 # ============================================================================
@@ -198,22 +185,8 @@ async def handle_update_organization_member(
     return [TextContent(type="text", text=text)], current_scope
 
 
-async def handle_remove_organization_member(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Remove a user from an organization.
-
-    Only organization admins and owners can remove members.
-    """
-    org_id = arguments["organization_id"]
-    user_id = arguments["user_id"]
-    response = await client.delete(f"/organizations/{org_id}/members/{user_id}")
-    response.raise_for_status()
-    logger.info(f"Successfully removed user {user_id} from organization {org_id}")
-
-    return [TextContent(type="text", text=f"Removed user {user_id} from organization")], current_scope
+# NOTE: handle_delete_organization_member removed from MCP - destructive operations require direct API access
+# See RAAS-FEAT-079: MCP Destructive Operation Removal
 
 
 # ============================================================================
@@ -303,21 +276,8 @@ async def handle_update_project(
     return [TextContent(type="text", text=text)], current_scope
 
 
-async def handle_delete_project(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Delete a project and all its requirements (cascading delete).
-
-    Only project admins and organization owners can delete projects. Use with caution!
-    """
-    project_id = arguments["project_id"]
-    response = await client.delete(f"/projects/{project_id}")
-    response.raise_for_status()
-    logger.info(f"Successfully deleted project {project_id}")
-
-    return [TextContent(type="text", text=f"Successfully deleted project {project_id}")], current_scope
+# NOTE: handle_delete_project removed from MCP - destructive operations require direct API access
+# See RAAS-FEAT-079: MCP Destructive Operation Removal
 
 
 # ============================================================================
@@ -383,22 +343,8 @@ async def handle_update_project_member(
     return [TextContent(type="text", text=text)], current_scope
 
 
-async def handle_remove_project_member(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Remove a user from a project.
-
-    Only project admins and organization admins can remove members.
-    """
-    project_id = arguments["project_id"]
-    user_id = arguments["user_id"]
-    response = await client.delete(f"/projects/{project_id}/members/{user_id}")
-    response.raise_for_status()
-    logger.info(f"Successfully removed user {user_id} from project {project_id}")
-
-    return [TextContent(type="text", text=f"Removed user {user_id} from project")], current_scope
+# NOTE: handle_delete_project_member removed from MCP - destructive operations require direct API access
+# See RAAS-FEAT-079: MCP Destructive Operation Removal
 
 
 # ============================================================================
@@ -970,23 +916,9 @@ async def handle_update_requirement(
     return [TextContent(type="text", text=text)], current_scope
 
 
-async def handle_delete_requirement(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Delete a requirement and ALL its children recursively (cascading delete, permanent).
-
-    Accepts both UUID and human-readable ID.
-
-    WARNING: This operation is PERMANENT and cascades to all descendants!
-    """
-    req_id = arguments["requirement_id"]
-    response = await client.delete(f"/requirements/{req_id}")
-    response.raise_for_status()
-    logger.info(f"Successfully deleted requirement {req_id}")
-
-    return [TextContent(type="text", text=f"Successfully deleted requirement {req_id}")], current_scope
+# NOTE: handle_delete_requirement removed from MCP - destructive operations require direct API access
+# For soft retirement, use transition_status to move requirement to 'deprecated' status
+# See RAAS-FEAT-079: MCP Destructive Operation Removal
 
 
 async def handle_get_requirement_children(
@@ -1252,3 +1184,366 @@ async def handle_list_guardrails(
     )
 
     return [TextContent(type="text", text=summary)], current_scope
+
+
+# ============================================================================
+# Change Request Handlers (RAAS-COMP-068)
+# ============================================================================
+
+async def handle_create_change_request(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Create a new change request with justification and affected requirements.
+
+    Change Requests (CR) gate updates to requirements that have passed review status.
+    """
+    data = {
+        "organization_id": arguments["organization_id"],
+        "justification": arguments["justification"],
+        "affects": arguments["affects"],
+    }
+    response = await client.post("/change-requests/", json=data)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully created change request {result['human_readable_id']}")
+
+    text = (
+        f"Created change request: {result['human_readable_id']}\n"
+        f"Status: {result['status']}\n"
+        f"Justification: {result['justification']}\n"
+        f"Affects: {result['affects_count']} requirements\n"
+        f"Created: {result['created_at']}\n\n"
+        f"Next steps:\n"
+        f"1. Submit for review: transition_change_request(cr_id='{result['human_readable_id']}', new_status='review')\n"
+        f"2. After approval, use this CR ID when updating requirements"
+    )
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_get_change_request(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get a change request by UUID or human-readable ID."""
+    cr_id = arguments["cr_id"]
+    response = await client.get(f"/change-requests/{cr_id}")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully retrieved change request {result['human_readable_id']}")
+
+    affects_list = ", ".join(str(a) for a in result['affects'][:5])
+    if len(result['affects']) > 5:
+        affects_list += f"... and {len(result['affects']) - 5} more"
+
+    text = (
+        f"Change Request: {result['human_readable_id']}\n"
+        f"Status: {result['status']}\n"
+        f"Justification: {result['justification']}\n"
+        f"Requestor: {result['requestor_email'] or 'Unknown'}\n"
+        f"Created: {result['created_at']}\n"
+        f"Updated: {result['updated_at']}\n\n"
+        f"Scope:\n"
+        f"  Affects: {result['affects_count']} requirements ({affects_list})\n"
+        f"  Modified: {result['modifications_count']} requirements\n"
+    )
+
+    if result['approved_at']:
+        text += f"\nApproved: {result['approved_at']} by {result['approved_by_email'] or 'Unknown'}"
+
+    if result['completed_at']:
+        text += f"\nCompleted: {result['completed_at']}"
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_list_change_requests(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """List and filter change requests with pagination."""
+    params = {}
+    for key in ["organization_id", "status", "page", "page_size"]:
+        if key in arguments and arguments[key] is not None:
+            params[key] = arguments[key]
+
+    response = await client.get("/change-requests/", params=params)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully listed change requests: {result['total']} total, page {result['page']}")
+
+    if result['total'] == 0:
+        return [TextContent(type="text", text="No change requests found matching the filters.")], current_scope
+
+    items_text = "\n\n".join([
+        f"{item['human_readable_id']}: {item['status']}\n"
+        f"  Justification: {item['justification'][:80]}{'...' if len(item['justification']) > 80 else ''}\n"
+        f"  Requestor: {item['requestor_email'] or 'Unknown'}\n"
+        f"  Affects: {item['affects_count']} | Modified: {item['modifications_count']}\n"
+        f"  Created: {item['created_at']}"
+        for item in result['items']
+    ])
+
+    summary = (
+        f"Found {result['total']} change requests (page {result['page']} of {result['total_pages']})\n\n"
+        f"{items_text}"
+    )
+
+    return [TextContent(type="text", text=summary)], current_scope
+
+
+async def handle_transition_change_request(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Transition a change request to a new status."""
+    cr_id = arguments["cr_id"]
+    new_status = arguments["new_status"]
+
+    response = await client.post(
+        f"/change-requests/{cr_id}/transition",
+        json={"new_status": new_status}
+    )
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully transitioned change request {result['human_readable_id']} to {new_status}")
+
+    text = (
+        f"Transitioned change request: {result['human_readable_id']}\n"
+        f"New status: {result['status']}\n"
+    )
+
+    if result['status'] == 'approved':
+        text += (
+            f"Approved at: {result['approved_at']}\n"
+            f"Approved by: {result['approved_by_email'] or 'Unknown'}\n\n"
+            f"This CR can now be used to update requirements in its scope."
+        )
+    elif result['status'] == 'completed':
+        text += f"Completed at: {result['completed_at']}\n"
+    elif result['status'] == 'review':
+        text += "Submitted for review. Awaiting approval."
+    elif result['status'] == 'draft':
+        text += "Returned to draft for revision."
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_complete_change_request(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Mark an approved change request as completed."""
+    cr_id = arguments["cr_id"]
+
+    response = await client.post(f"/change-requests/{cr_id}/complete")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully completed change request {result['human_readable_id']}")
+
+    text = (
+        f"Completed change request: {result['human_readable_id']}\n"
+        f"Status: {result['status']}\n"
+        f"Completed at: {result['completed_at']}\n"
+        f"Modified: {result['modifications_count']} requirements\n\n"
+        f"This CR is now closed and cannot be used for further updates."
+    )
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+# ============================================================================
+# Task Queue Handlers (RAAS-EPIC-027, RAAS-COMP-065)
+# ============================================================================
+
+
+def format_task(task: dict) -> str:
+    """Format a task for display."""
+    lines = [
+        f"**{task['human_readable_id'] or task['id']}**: {task['title']}",
+        f"Type: {task['task_type']} | Status: {task['status']} | Priority: {task['priority']}",
+    ]
+
+    if task.get('description'):
+        lines.append(f"Description: {task['description'][:200]}...")
+
+    if task.get('due_date'):
+        lines.append(f"Due: {task['due_date']}")
+
+    if task.get('source_type'):
+        lines.append(f"Source: {task['source_type']} ({task.get('source_id', 'N/A')})")
+
+    lines.append(f"Assignees: {task.get('assignee_count', 0)}")
+    lines.append(f"Created: {task['created_at']}")
+
+    if task.get('is_overdue'):
+        lines.append("**OVERDUE**")
+
+    return "\n".join(lines)
+
+
+async def handle_create_task(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Create a new task in the task queue."""
+    response = await client.post("/tasks/", json=arguments)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully created task {result['human_readable_id']}")
+
+    text = f"Created task: {result['human_readable_id']}\n\n{format_task(result)}"
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_list_tasks(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """List tasks with filtering and pagination."""
+    params = {}
+    for key in ['organization_id', 'project_id', 'assignee_id', 'status', 'task_type',
+                'priority', 'overdue_only', 'include_completed', 'page', 'page_size']:
+        if key in arguments and arguments[key] is not None:
+            params[key] = arguments[key]
+
+    response = await client.get("/tasks/", params=params)
+    response.raise_for_status()
+    result = response.json()
+
+    items = result.get('items', [])
+    total = result.get('total', 0)
+    page = result.get('page', 1)
+    total_pages = result.get('total_pages', 0)
+
+    if not items:
+        return [TextContent(type="text", text="No tasks found matching the criteria.")], current_scope
+
+    text_parts = [f"Found {total} tasks (page {page}/{total_pages}):\n"]
+    for task in items:
+        overdue = " **OVERDUE**" if task.get('is_overdue') else ""
+        text_parts.append(
+            f"• {task['human_readable_id'] or task['id']}: {task['title']} "
+            f"[{task['task_type']}] ({task['status']}) - {task['priority']}{overdue}"
+        )
+
+    return [TextContent(type="text", text="\n".join(text_parts))], current_scope
+
+
+async def handle_get_task(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get a specific task by ID."""
+    task_id = arguments["task_id"]
+    response = await client.get(f"/tasks/{task_id}")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Retrieved task {result['human_readable_id']}")
+
+    text = f"Task Details:\n\n{format_task(result)}"
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_update_task(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Update a task's fields."""
+    task_id = arguments.pop("task_id")
+    response = await client.patch(f"/tasks/{task_id}", json=arguments)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully updated task {result['human_readable_id']}")
+
+    text = f"Updated task: {result['human_readable_id']}\n\n{format_task(result)}"
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_assign_task(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Assign users to a task."""
+    task_id = arguments.pop("task_id")
+    response = await client.post(f"/tasks/{task_id}/assign", json=arguments)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully assigned task {result['human_readable_id']}")
+
+    text = (
+        f"Assigned task: {result['human_readable_id']}\n"
+        f"Title: {result['title']}\n"
+        f"Assignees: {result['assignee_count']}"
+    )
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_complete_task(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Mark a task as completed."""
+    task_id = arguments["task_id"]
+    response = await client.post(f"/tasks/{task_id}/complete")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully completed task {result['human_readable_id']}")
+
+    text = (
+        f"Completed task: {result['human_readable_id']}\n"
+        f"Title: {result['title']}\n"
+        f"Status: {result['status']}\n"
+        f"Completed at: {result['completed_at']}"
+    )
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_get_my_tasks(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get all tasks assigned to the current user."""
+    params = {}
+    if arguments.get('include_completed'):
+        params['include_completed'] = 'true'
+
+    response = await client.get("/tasks/my", params=params)
+    response.raise_for_status()
+    tasks = response.json()
+
+    if not tasks:
+        return [TextContent(type="text", text="You have no tasks assigned to you.")], current_scope
+
+    text_parts = [f"Your Tasks ({len(tasks)} total):\n"]
+
+    # Group by priority
+    by_priority = {'critical': [], 'high': [], 'medium': [], 'low': []}
+    for task in tasks:
+        priority = task['priority']
+        by_priority[priority].append(task)
+
+    for priority in ['critical', 'high', 'medium', 'low']:
+        if by_priority[priority]:
+            text_parts.append(f"\n**{priority.upper()}**")
+            for task in by_priority[priority]:
+                overdue = " **OVERDUE**" if task.get('is_overdue') else ""
+                due = f" (due: {task['due_date'][:10]})" if task.get('due_date') else ""
+                text_parts.append(
+                    f"  • {task['human_readable_id']}: {task['title']} [{task['task_type']}]{due}{overdue}"
+                )
+
+    return [TextContent(type="text", text="\n".join(text_parts))], current_scope

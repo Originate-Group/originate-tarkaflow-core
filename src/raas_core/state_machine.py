@@ -41,32 +41,44 @@ TRANSITION_MATRIX: dict[LifecycleStatus, list[LifecycleStatus]] = {
         LifecycleStatus.REVIEW,     # No-op (allowed)
         LifecycleStatus.DRAFT,      # Back: needs more work
         LifecycleStatus.APPROVED,   # Forward: approved after review
+        LifecycleStatus.DEPRECATED, # Terminal: soft retirement (RAAS-FEAT-080)
     ],
     LifecycleStatus.APPROVED: [
         LifecycleStatus.APPROVED,   # No-op (allowed)
         LifecycleStatus.DRAFT,      # Back: reopen for major changes
         LifecycleStatus.IN_PROGRESS,  # Forward: start implementation
+        LifecycleStatus.DEPRECATED, # Terminal: soft retirement (RAAS-FEAT-080)
     ],
     LifecycleStatus.IN_PROGRESS: [
         LifecycleStatus.IN_PROGRESS,  # No-op (allowed)
         LifecycleStatus.APPROVED,     # Back: blocked, back to backlog
         LifecycleStatus.IMPLEMENTED,  # Forward: implementation complete
+        LifecycleStatus.DEPRECATED,   # Terminal: soft retirement (RAAS-FEAT-080)
     ],
     LifecycleStatus.IMPLEMENTED: [
         LifecycleStatus.IMPLEMENTED,  # No-op (allowed)
         LifecycleStatus.IN_PROGRESS,  # Back: found issues, rework needed
         LifecycleStatus.VALIDATED,    # Forward: testing/validation complete
+        LifecycleStatus.DEPRECATED,   # Terminal: soft retirement (RAAS-FEAT-080)
     ],
     LifecycleStatus.VALIDATED: [
         LifecycleStatus.VALIDATED,    # No-op (allowed)
         LifecycleStatus.IMPLEMENTED,  # Back: validation failed, fix needed
         LifecycleStatus.DEPLOYED,     # Forward: deployed to production
+        LifecycleStatus.DEPRECATED,   # Terminal: soft retirement (RAAS-FEAT-080)
     ],
     LifecycleStatus.DEPLOYED: [
         LifecycleStatus.DEPLOYED,     # No-op (allowed)
-        # Note: Cannot transition out of deployed state
+        LifecycleStatus.DEPRECATED,   # Terminal: soft retirement (RAAS-FEAT-080)
+        # Note: Cannot transition to other statuses from deployed
         # Deployed requirements are immutable records
         # New work requires creating child requirements
+    ],
+    LifecycleStatus.DEPRECATED: [
+        LifecycleStatus.DEPRECATED,   # No-op (allowed)
+        # Note: DEPRECATED is terminal - cannot transition out (RAAS-FEAT-080)
+        # Use deprecated for soft retirement instead of hard deletion
+        # Deprecated requirements are excluded from default queries
     ],
 }
 
@@ -120,10 +132,14 @@ def validate_transition(
         # Add helpful guidance based on the attempted transition
         if current_status == LifecycleStatus.DRAFT and new_status == LifecycleStatus.APPROVED:
             error_msg += " Requirements must be reviewed before approval. Transition to 'review' first."
+        elif current_status == LifecycleStatus.DRAFT and new_status == LifecycleStatus.DEPRECATED:
+            error_msg += " Draft requirements cannot be deprecated. Submit for review first, or delete if unwanted."
         elif current_status == LifecycleStatus.DRAFT and new_status not in [LifecycleStatus.REVIEW]:
             error_msg += " Requirements in draft must go through review before implementation."
         elif current_status == LifecycleStatus.DEPLOYED:
             error_msg += " Deployed requirements are immutable. Create a new child requirement for additional work."
+        elif current_status == LifecycleStatus.DEPRECATED:
+            error_msg += " Deprecated requirements are terminal and cannot be reactivated. Create a new requirement instead."
 
         logger.warning(f"Blocked transition: {error_msg}")
         raise StateTransitionError(
@@ -162,4 +178,5 @@ STATUS_SORT_ORDER: dict[LifecycleStatus, int] = {
     LifecycleStatus.REVIEW: 5,        # Needs review decision
     LifecycleStatus.DRAFT: 6,         # Backlog - lowest priority
     LifecycleStatus.DEPLOYED: 7,      # Done (usually excluded from lists)
+    LifecycleStatus.DEPRECATED: 8,    # Retired - excluded from default queries (RAAS-FEAT-080)
 }

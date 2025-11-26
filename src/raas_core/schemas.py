@@ -17,6 +17,11 @@ from .models import (
     GuardrailCategory,
     GuardrailStatus,
     EnforcementLevel,
+    ChangeRequestStatus,
+    TaskType,
+    TaskStatus,
+    TaskPriority,
+    TaskChangeType,
 )
 
 
@@ -60,6 +65,9 @@ class RequirementUpdate(BaseModel):
 
     Note: title and description are READ-ONLY fields extracted from content.
     To update them, provide updated markdown content - do not update them directly.
+
+    IMPORTANT: For requirements in approved+ status, a change_request_id is required.
+    Draft and review status requirements can be updated without a CR.
     """
 
     content: Optional[str] = None  # Full markdown content (updates title/description when parsed)
@@ -67,6 +75,7 @@ class RequirementUpdate(BaseModel):
     tags: Optional[list[str]] = None
     depends_on: Optional[list[UUID]] = None  # Update dependencies
     adheres_to: Optional[list[str]] = None  # Update guardrail references
+    change_request_id: Optional[str] = Field(None, description="Change request UUID or human-readable ID (required for requirements past review status)")
     # Legacy fields - DEPRECATED and ignored
     title: Optional[str] = Field(None, min_length=1, max_length=200)
 
@@ -492,3 +501,340 @@ class GuardrailListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+# ============================================================================
+# Change Request Schemas (RAAS-COMP-068)
+# ============================================================================
+
+class ChangeRequestCreate(BaseModel):
+    """Schema for creating a new change request.
+
+    Change requests gate updates to requirements that have passed review status.
+    The 'affects' list declares which requirements this CR intends to modify.
+    """
+
+    organization_id: UUID = Field(..., description="Organization UUID")
+    justification: str = Field(..., min_length=10, description="Justification for the change (min 10 characters)")
+    affects: list[UUID] = Field(..., min_length=1, description="List of requirement UUIDs this CR will modify")
+
+
+class ChangeRequestTransition(BaseModel):
+    """Schema for transitioning a change request status."""
+
+    new_status: ChangeRequestStatus = Field(..., description="Target status (draft -> review -> approved -> completed)")
+
+
+class ChangeRequestResponse(BaseModel):
+    """Schema for change request responses."""
+
+    id: UUID
+    human_readable_id: Optional[str] = None  # e.g., CR-001
+    organization_id: UUID
+    justification: str
+    status: ChangeRequestStatus
+
+    # Requestor
+    requestor_id: Optional[UUID] = None
+    requestor_email: Optional[str] = None
+
+    # Approval tracking
+    approved_at: Optional[datetime] = None
+    approved_by_id: Optional[UUID] = None
+    approved_by_email: Optional[str] = None
+
+    # Completion tracking
+    completed_at: Optional[datetime] = None
+
+    # Timestamps
+    created_at: datetime
+    updated_at: datetime
+
+    # Scope tracking
+    affects: list[UUID] = Field(default_factory=list, description="Requirements in declared scope")
+    affects_count: int = Field(description="Count of requirements in declared scope")
+    modifications_count: int = Field(description="Count of requirements actually modified")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChangeRequestListItem(BaseModel):
+    """Schema for change request list items (lightweight)."""
+
+    id: UUID
+    human_readable_id: Optional[str] = None
+    organization_id: UUID
+    justification: str
+    status: ChangeRequestStatus
+    requestor_email: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    affects_count: int = Field(description="Count of requirements in declared scope")
+    modifications_count: int = Field(description="Count of requirements actually modified")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChangeRequestListResponse(BaseModel):
+    """Schema for paginated change request list."""
+
+    items: list[ChangeRequestListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+# ============================================================================
+# Task Queue Schemas (RAAS-EPIC-027, RAAS-COMP-065)
+# ============================================================================
+
+
+class TaskAssigneeResponse(BaseModel):
+    """Schema for task assignee information."""
+
+    user_id: UUID
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_primary: bool = True
+    assigned_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskCreate(BaseModel):
+    """Schema for creating a new task.
+
+    Tasks can be created directly by users or by task sources (clarification
+    points, review requests, etc.). Source-created tasks should include
+    source_type and source_id for bidirectional linking.
+    """
+
+    organization_id: UUID = Field(..., description="Organization UUID")
+    project_id: Optional[UUID] = Field(None, description="Project UUID (optional for org-wide tasks)")
+    title: str = Field(..., min_length=1, max_length=200, description="Task title")
+    description: Optional[str] = Field(None, description="Task description")
+    task_type: TaskType = Field(..., description="Task type (clarification, review, approval, gap_resolution, custom)")
+    priority: TaskPriority = Field(TaskPriority.MEDIUM, description="Task priority")
+    due_date: Optional[datetime] = Field(None, description="Due date (optional)")
+    assignee_ids: list[UUID] = Field(default_factory=list, description="List of user UUIDs to assign")
+    # Source artifact linking
+    source_type: Optional[str] = Field(None, description="Source system type (requirement, guardrail, etc.)")
+    source_id: Optional[UUID] = Field(None, description="Source artifact UUID")
+    source_context: Optional[dict] = Field(None, description="Additional context from source")
+
+
+class TaskUpdate(BaseModel):
+    """Schema for updating an existing task."""
+
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    status: Optional[TaskStatus] = None
+    priority: Optional[TaskPriority] = None
+    due_date: Optional[datetime] = None
+
+
+class TaskAssign(BaseModel):
+    """Schema for assigning users to a task."""
+
+    assignee_ids: list[UUID] = Field(..., min_length=1, description="List of user UUIDs to assign")
+    replace: bool = Field(False, description="If true, replaces all existing assignees; if false, adds to existing")
+
+
+class TaskResponse(BaseModel):
+    """Schema for full task response."""
+
+    id: UUID
+    human_readable_id: Optional[str] = None
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    title: str
+    description: Optional[str] = None
+    task_type: TaskType
+    status: TaskStatus
+    priority: TaskPriority
+    due_date: Optional[datetime] = None
+    # Source linking
+    source_type: Optional[str] = None
+    source_id: Optional[UUID] = None
+    source_context: Optional[dict] = None
+    # Assignees
+    assignee_count: int = Field(description="Number of assignees")
+    # Audit fields
+    created_by: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    completed_by: Optional[UUID] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskListItem(BaseModel):
+    """Schema for task list items (lightweight)."""
+
+    id: UUID
+    human_readable_id: Optional[str] = None
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    title: str
+    description: Optional[str] = None
+    task_type: TaskType
+    status: TaskStatus
+    priority: TaskPriority
+    due_date: Optional[datetime] = None
+    source_type: Optional[str] = None
+    assignee_count: int = Field(description="Number of assignees")
+    is_overdue: bool = Field(description="True if due_date is in the past and status is not completed/cancelled")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskListResponse(BaseModel):
+    """Schema for paginated task list."""
+
+    items: list[TaskListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class TaskHistoryResponse(BaseModel):
+    """Schema for task history entries."""
+
+    id: UUID
+    task_id: UUID
+    change_type: TaskChangeType
+    field_name: Optional[str] = None
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    comment: Optional[str] = None
+    changed_by: Optional[UUID] = None
+    changed_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Task Routing Rule Schemas (RAAS-COMP-067)
+# =============================================================================
+
+class RoutingRuleCreate(BaseModel):
+    """Schema for creating a task routing rule."""
+
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    name: str = Field(..., max_length=200)
+    description: Optional[str] = None
+
+    # Rule matching
+    scope: str = Field(default="organization", description="Rule scope: organization or project")
+    match_type: str = Field(..., description="Match type: task_type, source_type, priority, requirement_type, tag")
+    match_value: str = Field(..., max_length=100, description="Value to match against")
+
+    # Assignment configuration
+    assignee_user_id: Optional[UUID] = None
+    assignee_role: Optional[str] = Field(None, max_length=50, description="Role for role-based assignment")
+    fallback_user_id: Optional[UUID] = None
+
+    # Rule priority (lower = evaluated first)
+    priority: int = Field(default=100, ge=1, le=1000)
+
+    is_active: bool = True
+
+
+class RoutingRuleUpdate(BaseModel):
+    """Schema for updating a task routing rule."""
+
+    name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = None
+    scope: Optional[str] = None
+    match_type: Optional[str] = None
+    match_value: Optional[str] = Field(None, max_length=100)
+    assignee_user_id: Optional[UUID] = None
+    assignee_role: Optional[str] = Field(None, max_length=50)
+    fallback_user_id: Optional[UUID] = None
+    priority: Optional[int] = Field(None, ge=1, le=1000)
+    is_active: Optional[bool] = None
+
+
+class RoutingRuleResponse(BaseModel):
+    """Schema for routing rule response."""
+
+    id: UUID
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    name: str
+    description: Optional[str] = None
+    scope: str
+    match_type: str
+    match_value: str
+    assignee_user_id: Optional[UUID] = None
+    assignee_role: Optional[str] = None
+    fallback_user_id: Optional[UUID] = None
+    priority: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[UUID] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoutingRuleListResponse(BaseModel):
+    """Schema for paginated routing rules list."""
+
+    items: list[RoutingRuleResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class TaskDelegationCreate(BaseModel):
+    """Schema for delegating a task."""
+
+    task_id: UUID
+    delegated_to: UUID
+    reason: Optional[str] = None
+
+
+class TaskDelegationResponse(BaseModel):
+    """Schema for task delegation response."""
+
+    id: UUID
+    task_id: UUID
+    delegated_by: Optional[UUID] = None
+    delegated_to: Optional[UUID] = None
+    original_assignee: Optional[UUID] = None
+    reason: Optional[str] = None
+    delegated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskEscalationCreate(BaseModel):
+    """Schema for escalating a task."""
+
+    task_id: UUID
+    escalated_to: UUID
+    reason: str = Field(..., max_length=50)
+    notes: Optional[str] = None
+
+
+class TaskEscalationResponse(BaseModel):
+    """Schema for task escalation response."""
+
+    id: UUID
+    task_id: UUID
+    escalated_from: Optional[UUID] = None
+    escalated_to: Optional[UUID] = None
+    reason: str
+    notes: Optional[str] = None
+    escalated_at: datetime
+    escalated_by_system: bool
+
+    model_config = ConfigDict(from_attributes=True)

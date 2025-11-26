@@ -97,23 +97,23 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "get_organization": handlers.handle_get_organization,
                 "create_organization": handlers.handle_create_organization,
                 "update_organization": handlers.handle_update_organization,
-                "delete_organization": handlers.handle_delete_organization,
+                # NOTE: delete_organization removed - use API directly
                 # Organization member handlers
                 "list_organization_members": handlers.handle_list_organization_members,
                 "add_organization_member": handlers.handle_add_organization_member,
                 "update_organization_member": handlers.handle_update_organization_member,
-                "remove_organization_member": handlers.handle_remove_organization_member,
+                # NOTE: delete_organization_member removed - use API directly
                 # Project handlers
                 "list_projects": handlers.handle_list_projects,
                 "get_project": handlers.handle_get_project,
                 "create_project": handlers.handle_create_project,
                 "update_project": handlers.handle_update_project,
-                "delete_project": handlers.handle_delete_project,
+                # NOTE: delete_project removed - use API directly
                 # Project member handlers
                 "list_project_members": handlers.handle_list_project_members,
                 "add_project_member": handlers.handle_add_project_member,
                 "update_project_member": handlers.handle_update_project_member,
-                "remove_project_member": handlers.handle_remove_project_member,
+                # NOTE: delete_project_member removed - use API directly
                 # Project scope handlers
                 "select_project": handlers.handle_select_project,
                 "get_project_scope": handlers.handle_get_project_scope,
@@ -133,7 +133,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "list_requirements": handlers.handle_list_requirements,
                 "get_requirement": handlers.handle_get_requirement,
                 "update_requirement": handlers.handle_update_requirement,
-                "delete_requirement": handlers.handle_delete_requirement,
+                # NOTE: delete_requirement removed - use API directly or transition to 'deprecated'
                 "get_requirement_children": handlers.handle_get_requirement_children,
                 "get_requirement_history": handlers.handle_get_requirement_history,
                 "transition_status": handlers.handle_transition_status,
@@ -143,6 +143,20 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "get_guardrail": handlers.handle_get_guardrail,
                 "update_guardrail": handlers.handle_update_guardrail,
                 "list_guardrails": handlers.handle_list_guardrails,
+                # Change request handlers (RAAS-COMP-068)
+                "create_change_request": handlers.handle_create_change_request,
+                "get_change_request": handlers.handle_get_change_request,
+                "list_change_requests": handlers.handle_list_change_requests,
+                "transition_change_request": handlers.handle_transition_change_request,
+                "complete_change_request": handlers.handle_complete_change_request,
+                # Task handlers (RAAS-COMP-065)
+                "create_task": handlers.handle_create_task,
+                "list_tasks": handlers.handle_list_tasks,
+                "get_task": handlers.handle_get_task,
+                "update_task": handlers.handle_update_task,
+                "assign_task": handlers.handle_assign_task,
+                "complete_task": handlers.handle_complete_task,
+                "get_my_tasks": handlers.handle_get_my_tasks,
             }
 
             # Look up and execute handler

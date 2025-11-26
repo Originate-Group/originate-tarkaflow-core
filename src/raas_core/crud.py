@@ -333,6 +333,7 @@ def get_requirements(
     organization_ids: Optional[list[UUID]] = None,
     project_id: Optional[UUID] = None,
     include_deployed: bool = False,
+    include_deprecated: bool = False,
     ready_to_implement: Optional[bool] = None,
     blocked_by: Optional[UUID] = None,
 ) -> tuple[list[models.Requirement], int]:
@@ -352,6 +353,7 @@ def get_requirements(
         organization_ids: Filter by organization IDs (for multi-user access control)
         project_id: Filter by project ID
         include_deployed: Include deployed items (default: False, deployed items excluded)
+        include_deprecated: Include deprecated items (default: False, deprecated items excluded)
         ready_to_implement: Filter for requirements with all dependencies code-complete (True) or with unmet dependencies (False). Code-complete = implemented, validated, or deployed.
         blocked_by: Filter for requirements that depend on the specified requirement ID
 
@@ -397,6 +399,10 @@ def get_requirements(
     # Exclude deployed items by default unless explicitly requested
     if not include_deployed:
         query = query.filter(models.Requirement.status != models.LifecycleStatus.DEPLOYED)
+
+    # Exclude deprecated items by default unless explicitly requested (RAAS-FEAT-080)
+    if not include_deprecated:
+        query = query.filter(models.Requirement.status != models.LifecycleStatus.DEPRECATED)
 
     # Filter by blocked_by (requirements that depend on a specific requirement)
     if blocked_by:
@@ -2216,3 +2222,809 @@ def list_guardrails(
     guardrails = query.order_by(models.Guardrail.created_at.desc()).offset(skip).limit(limit).all()
 
     return guardrails, total
+
+
+# ============================================================================
+# Change Request CRUD (RAAS-COMP-068)
+# ============================================================================
+
+def create_change_request(
+    db: Session,
+    organization_id: UUID,
+    justification: str,
+    affects: list[UUID],
+    user_id: Optional[UUID] = None,
+) -> models.ChangeRequest:
+    """
+    Create a new change request.
+
+    Args:
+        db: Database session
+        organization_id: Organization UUID
+        justification: Justification for the change (min 10 characters)
+        affects: List of requirement UUIDs this CR intends to modify
+        user_id: User UUID (requestor)
+
+    Returns:
+        Created change request instance
+
+    Raises:
+        ValueError: If justification is too short or affects list is empty
+    """
+    if not justification or len(justification) < 10:
+        raise ValueError("Justification must be at least 10 characters")
+
+    if not affects:
+        raise ValueError("At least one requirement must be specified in the affects list")
+
+    # Verify all affected requirements exist and belong to the same organization
+    for req_id in affects:
+        requirement = db.query(models.Requirement).filter(models.Requirement.id == req_id).first()
+        if not requirement:
+            raise ValueError(f"Requirement not found: {req_id}")
+        if requirement.organization_id != organization_id:
+            raise ValueError(f"Requirement {req_id} belongs to a different organization")
+
+    # Create the change request
+    db_cr = models.ChangeRequest(
+        organization_id=organization_id,
+        justification=justification,
+        requestor_id=user_id,
+        status=models.ChangeRequestStatus.DRAFT,
+    )
+
+    db.add(db_cr)
+    db.flush()  # Get the ID for the CR
+
+    # Add affected requirements
+    for req_id in affects:
+        requirement = db.query(models.Requirement).filter(models.Requirement.id == req_id).first()
+        db_cr.affects.append(requirement)
+
+    db.commit()
+    db.refresh(db_cr)
+
+    logger.info(f"Created change request {db_cr.human_readable_id} affecting {len(affects)} requirements")
+    return db_cr
+
+
+def get_change_request(
+    db: Session,
+    cr_id: str,
+) -> Optional[models.ChangeRequest]:
+    """
+    Get a change request by UUID or human-readable ID.
+
+    Args:
+        db: Database session
+        cr_id: Change request UUID or human-readable ID (e.g., 'CR-001')
+
+    Returns:
+        ChangeRequest or None if not found
+    """
+    # Try UUID first
+    try:
+        uuid_id = UUID(cr_id)
+        cr = db.query(models.ChangeRequest).filter(models.ChangeRequest.id == uuid_id).first()
+        if cr:
+            return cr
+    except (ValueError, AttributeError):
+        pass
+
+    # Try human-readable ID (case-insensitive)
+    cr = db.query(models.ChangeRequest).filter(
+        models.ChangeRequest.human_readable_id.ilike(cr_id)
+    ).first()
+    return cr
+
+
+def transition_change_request(
+    db: Session,
+    cr_id: str,
+    new_status: models.ChangeRequestStatus,
+    user_id: Optional[UUID] = None,
+) -> models.ChangeRequest:
+    """
+    Transition a change request to a new status.
+
+    Valid transitions:
+    - draft -> review
+    - review -> approved
+    - review -> draft
+    - approved -> completed
+
+    Args:
+        db: Database session
+        cr_id: Change request UUID
+        new_status: Target status
+        user_id: User UUID (for approval tracking)
+
+    Returns:
+        Updated change request
+
+    Raises:
+        ValueError: If transition is invalid
+    """
+    cr = get_change_request(db, cr_id)
+    if not cr:
+        raise ValueError(f"Change request not found: {cr_id}")
+
+    current_status = cr.status
+    from datetime import datetime
+
+    # Define valid transitions
+    valid_transitions = {
+        models.ChangeRequestStatus.DRAFT: [models.ChangeRequestStatus.REVIEW],
+        models.ChangeRequestStatus.REVIEW: [
+            models.ChangeRequestStatus.APPROVED,
+            models.ChangeRequestStatus.DRAFT,
+        ],
+        models.ChangeRequestStatus.APPROVED: [models.ChangeRequestStatus.COMPLETED],
+        models.ChangeRequestStatus.COMPLETED: [],  # Terminal state
+    }
+
+    # Same-status is a no-op
+    if new_status == current_status:
+        return cr
+
+    # Check if transition is valid
+    if new_status not in valid_transitions.get(current_status, []):
+        allowed = [s.value for s in valid_transitions.get(current_status, [])]
+        raise ValueError(
+            f"Invalid transition: {current_status.value} -> {new_status.value}. "
+            f"Valid transitions from {current_status.value}: {', '.join(allowed) or 'none'}"
+        )
+
+    # Update status
+    cr.status = new_status
+
+    # Set approval tracking if moving to approved
+    if new_status == models.ChangeRequestStatus.APPROVED:
+        cr.approved_at = datetime.utcnow()
+        cr.approved_by_id = user_id
+
+    # Set completion tracking if moving to completed
+    if new_status == models.ChangeRequestStatus.COMPLETED:
+        cr.completed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(cr)
+
+    logger.info(f"Transitioned CR {cr.human_readable_id} from {current_status.value} to {new_status.value}")
+    return cr
+
+
+def list_change_requests(
+    db: Session,
+    skip: int = 0,
+    limit: int = 50,
+    organization_id: Optional[UUID] = None,
+    status: Optional[str] = None,
+    user_id: Optional[UUID] = None,
+) -> tuple[list[models.ChangeRequest], int]:
+    """
+    List change requests with optional filtering.
+
+    Args:
+        db: Database session
+        skip: Number of records to skip
+        limit: Maximum records to return
+        organization_id: Filter by organization
+        status: Filter by status
+        user_id: Filter by user's organization membership
+
+    Returns:
+        Tuple of (change_requests list, total count)
+    """
+    query = db.query(models.ChangeRequest)
+
+    # Filter by user's organization membership if user_id provided
+    if user_id:
+        query = query.join(models.Organization).join(models.OrganizationMember).filter(
+            models.OrganizationMember.user_id == user_id
+        )
+
+    # Apply filters
+    if organization_id:
+        query = query.filter(models.ChangeRequest.organization_id == organization_id)
+
+    if status:
+        query = query.filter(models.ChangeRequest.status == status)
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination and ordering (newest first)
+    change_requests = query.order_by(models.ChangeRequest.created_at.desc()).offset(skip).limit(limit).all()
+
+    return change_requests, total
+
+
+def validate_change_request_for_update(
+    db: Session,
+    requirement_id: UUID,
+    change_request_id: Optional[str],
+    organization_id: UUID,
+) -> Optional[models.ChangeRequest]:
+    """
+    Validate CR requirement based on requirement status (RAAS-FEAT-078).
+
+    For requirements in draft/review status, no CR is required.
+    For requirements in approved+ status, an approved CR is required and
+    the requirement must be in the CR's affects list.
+
+    Args:
+        db: Database session
+        requirement_id: UUID of the requirement being updated
+        change_request_id: UUID or human-readable ID of the change request (e.g., 'CR-001')
+        organization_id: UUID of the organization
+
+    Returns:
+        The validated ChangeRequest if CR is required and valid, None otherwise
+
+    Raises:
+        ValueError: If CR is required but not provided, or CR validation fails
+    """
+    # Get the requirement
+    requirement = db.query(models.Requirement).filter(models.Requirement.id == requirement_id).first()
+    if not requirement:
+        raise ValueError(f"Requirement not found: {requirement_id}")
+
+    # Draft and review requirements don't need CR
+    cr_exempt_statuses = [models.LifecycleStatus.DRAFT, models.LifecycleStatus.REVIEW]
+    if requirement.status in cr_exempt_statuses:
+        logger.debug(f"Requirement {requirement_id} in {requirement.status.value} status - CR not required")
+        return None
+
+    # Approved+ requirements need CR
+    if not change_request_id:
+        raise ValueError(
+            f"Change request required: Requirement {requirement.human_readable_id or requirement_id} is in "
+            f"'{requirement.status.value}' status. Requirements past review status require an approved "
+            f"change request to modify. Create a CR with this requirement in its 'affects' list, "
+            f"get it approved, then include the change_request_id in your update request."
+        )
+
+    # Look up the change request (supports UUID or human-readable ID)
+    cr = get_change_request(db, change_request_id)
+    if not cr:
+        raise ValueError(f"Change request not found: {change_request_id}")
+
+    # Verify organization match
+    if cr.organization_id != organization_id:
+        raise ValueError("Change request belongs to a different organization")
+
+    # Verify CR is approved
+    if cr.status != models.ChangeRequestStatus.APPROVED:
+        raise ValueError(
+            f"Change request must be approved before use (current status: {cr.status.value}). "
+            f"Use transition_change_request to move CR-{cr.human_readable_id} to approved status."
+        )
+
+    # Verify requirement is in affects list
+    affected_ids = [req.id for req in cr.affects]
+    if requirement_id not in affected_ids:
+        raise ValueError(
+            f"Requirement {requirement.human_readable_id or requirement_id} is not in the change request's "
+            f"affects list. The requirement must be declared in the CR scope before it can be modified."
+        )
+
+    logger.info(f"CR {cr.human_readable_id} validated for update to requirement {requirement.human_readable_id or requirement_id}")
+    return cr
+
+
+def record_change_request_modification(
+    db: Session,
+    cr: models.ChangeRequest,
+    requirement: models.Requirement,
+) -> None:
+    """
+    Record that a requirement was modified using a change request (RAAS-REQ-091).
+
+    This auto-populates the change_request_modifications table when a requirement
+    is successfully updated using an approved CR.
+
+    Args:
+        db: Database session
+        cr: The change request used for the modification
+        requirement: The requirement that was modified
+    """
+    # Check if already recorded (idempotent)
+    if requirement in cr.modified_requirements:
+        logger.debug(f"Requirement {requirement.id} already recorded as modified by CR {cr.human_readable_id}")
+        return
+
+    cr.modified_requirements.append(requirement)
+    db.flush()
+    logger.info(f"Recorded modification: CR {cr.human_readable_id} modified requirement {requirement.human_readable_id or requirement.id}")
+
+
+# ============================================================================
+# Task Queue CRUD Operations (RAAS-EPIC-027, RAAS-COMP-065)
+# ============================================================================
+
+
+def create_task(
+    db: Session,
+    task_data: schemas.TaskCreate,
+    user_id: Optional[UUID] = None,
+) -> models.Task:
+    """
+    Create a new task.
+
+    Args:
+        db: Database session
+        task_data: Task creation data
+        user_id: UUID of the user creating the task
+
+    Returns:
+        Created Task object
+    """
+    task = models.Task(
+        organization_id=task_data.organization_id,
+        project_id=task_data.project_id,
+        title=task_data.title,
+        description=task_data.description,
+        task_type=task_data.task_type,
+        priority=task_data.priority,
+        due_date=task_data.due_date,
+        source_type=task_data.source_type,
+        source_id=task_data.source_id,
+        source_context=task_data.source_context,
+        created_by=user_id,
+    )
+    db.add(task)
+    db.flush()  # Get task ID for assignees
+
+    # Add assignees
+    if task_data.assignee_ids:
+        for assignee_id in task_data.assignee_ids:
+            user = db.query(models.User).filter(models.User.id == assignee_id).first()
+            if user:
+                task.assignees.append(user)
+
+    # Record creation in history
+    history = models.TaskHistory(
+        task_id=task.id,
+        change_type=models.TaskChangeType.CREATED,
+        new_value=task.title,
+        changed_by=user_id,
+    )
+    db.add(history)
+
+    db.commit()
+    db.refresh(task)
+    logger.info(f"Created task {task.human_readable_id}: {task.title}")
+    return task
+
+
+def get_task(
+    db: Session,
+    task_id: str,
+) -> Optional[models.Task]:
+    """
+    Get a task by UUID or human-readable ID.
+
+    Args:
+        db: Database session
+        task_id: Task UUID or human-readable ID (e.g., 'TASK-001')
+
+    Returns:
+        Task or None if not found
+    """
+    # Try UUID first
+    try:
+        uuid_id = UUID(task_id)
+        task = db.query(models.Task).filter(models.Task.id == uuid_id).first()
+        if task:
+            return task
+    except (ValueError, AttributeError):
+        pass
+
+    # Try human-readable ID (case-insensitive)
+    task = db.query(models.Task).filter(
+        models.Task.human_readable_id.ilike(task_id)
+    ).first()
+    return task
+
+
+def get_tasks(
+    db: Session,
+    skip: int = 0,
+    limit: int = 50,
+    organization_id: Optional[UUID] = None,
+    project_id: Optional[UUID] = None,
+    assignee_id: Optional[UUID] = None,
+    status: Optional[models.TaskStatus] = None,
+    task_type: Optional[models.TaskType] = None,
+    priority: Optional[models.TaskPriority] = None,
+    source_type: Optional[str] = None,
+    source_id: Optional[UUID] = None,
+    overdue_only: bool = False,
+    include_completed: bool = False,
+) -> tuple[list[models.Task], int]:
+    """
+    Get tasks with filtering and pagination.
+
+    Args:
+        db: Database session
+        skip: Number of items to skip
+        limit: Maximum number of items to return
+        organization_id: Filter by organization
+        project_id: Filter by project
+        assignee_id: Filter by assignee (tasks assigned to this user)
+        status: Filter by status
+        task_type: Filter by task type
+        priority: Filter by priority
+        source_type: Filter by source type
+        source_id: Filter by source artifact ID
+        overdue_only: Only return overdue tasks
+        include_completed: Include completed/cancelled tasks (default: false)
+
+    Returns:
+        Tuple of (tasks, total_count)
+    """
+    from datetime import datetime
+
+    query = db.query(models.Task)
+
+    # Apply filters
+    if organization_id:
+        query = query.filter(models.Task.organization_id == organization_id)
+
+    if project_id:
+        query = query.filter(models.Task.project_id == project_id)
+
+    if assignee_id:
+        query = query.filter(models.Task.assignees.any(models.User.id == assignee_id))
+
+    if status:
+        query = query.filter(models.Task.status == status)
+    elif not include_completed:
+        # Exclude completed and cancelled by default
+        query = query.filter(
+            models.Task.status.notin_([models.TaskStatus.COMPLETED, models.TaskStatus.CANCELLED])
+        )
+
+    if task_type:
+        query = query.filter(models.Task.task_type == task_type)
+
+    if priority:
+        query = query.filter(models.Task.priority == priority)
+
+    if source_type:
+        query = query.filter(models.Task.source_type == source_type)
+
+    if source_id:
+        query = query.filter(models.Task.source_id == source_id)
+
+    if overdue_only:
+        query = query.filter(
+            models.Task.due_date < datetime.utcnow(),
+            models.Task.status.notin_([models.TaskStatus.COMPLETED, models.TaskStatus.CANCELLED])
+        )
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Order by priority (critical first) then due_date (earliest first) then created_at
+    priority_order = [
+        models.TaskPriority.CRITICAL,
+        models.TaskPriority.HIGH,
+        models.TaskPriority.MEDIUM,
+        models.TaskPriority.LOW,
+    ]
+    query = query.order_by(
+        # Custom priority ordering
+        db.case(
+            {p: i for i, p in enumerate(priority_order)},
+            value=models.Task.priority
+        ),
+        models.Task.due_date.asc().nulls_last(),
+        models.Task.created_at.desc()
+    )
+
+    # Apply pagination
+    tasks = query.offset(skip).limit(limit).all()
+
+    return tasks, total
+
+
+def update_task(
+    db: Session,
+    task_id: UUID,
+    task_update: schemas.TaskUpdate,
+    user_id: Optional[UUID] = None,
+) -> Optional[models.Task]:
+    """
+    Update a task.
+
+    Args:
+        db: Database session
+        task_id: Task UUID
+        task_update: Update data
+        user_id: UUID of user making the update
+
+    Returns:
+        Updated Task or None if not found
+    """
+    from datetime import datetime
+
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        return None
+
+    # Track changes for history
+    changes = []
+
+    if task_update.title is not None and task_update.title != task.title:
+        changes.append(('title', task.title, task_update.title))
+        task.title = task_update.title
+
+    if task_update.description is not None:
+        changes.append(('description', task.description, task_update.description))
+        task.description = task_update.description
+
+    if task_update.status is not None and task_update.status != task.status:
+        old_status = task.status.value
+        task.status = task_update.status
+        changes.append(('status', old_status, task_update.status.value))
+
+        # Handle completion
+        if task_update.status == models.TaskStatus.COMPLETED:
+            task.completed_at = datetime.utcnow()
+            task.completed_by = user_id
+            # Record completion in history
+            history = models.TaskHistory(
+                task_id=task.id,
+                change_type=models.TaskChangeType.COMPLETED,
+                old_value=old_status,
+                new_value=task_update.status.value,
+                changed_by=user_id,
+            )
+            db.add(history)
+        elif task_update.status == models.TaskStatus.CANCELLED:
+            # Record cancellation
+            history = models.TaskHistory(
+                task_id=task.id,
+                change_type=models.TaskChangeType.CANCELLED,
+                old_value=old_status,
+                new_value=task_update.status.value,
+                changed_by=user_id,
+            )
+            db.add(history)
+        else:
+            # Record status change
+            history = models.TaskHistory(
+                task_id=task.id,
+                change_type=models.TaskChangeType.STATUS_CHANGED,
+                field_name='status',
+                old_value=old_status,
+                new_value=task_update.status.value,
+                changed_by=user_id,
+            )
+            db.add(history)
+
+    if task_update.priority is not None and task_update.priority != task.priority:
+        old_priority = task.priority.value
+        task.priority = task_update.priority
+        history = models.TaskHistory(
+            task_id=task.id,
+            change_type=models.TaskChangeType.PRIORITY_CHANGED,
+            field_name='priority',
+            old_value=old_priority,
+            new_value=task_update.priority.value,
+            changed_by=user_id,
+        )
+        db.add(history)
+
+    if task_update.due_date is not None:
+        old_due = str(task.due_date) if task.due_date else None
+        task.due_date = task_update.due_date
+        history = models.TaskHistory(
+            task_id=task.id,
+            change_type=models.TaskChangeType.DUE_DATE_CHANGED,
+            field_name='due_date',
+            old_value=old_due,
+            new_value=str(task_update.due_date),
+            changed_by=user_id,
+        )
+        db.add(history)
+
+    db.commit()
+    db.refresh(task)
+    logger.info(f"Updated task {task.human_readable_id}")
+    return task
+
+
+def assign_task(
+    db: Session,
+    task_id: UUID,
+    assignee_ids: list[UUID],
+    user_id: Optional[UUID] = None,
+    replace: bool = False,
+) -> Optional[models.Task]:
+    """
+    Assign users to a task.
+
+    Args:
+        db: Database session
+        task_id: Task UUID
+        assignee_ids: List of user UUIDs to assign
+        user_id: UUID of user making the assignment
+        replace: If true, replace all existing assignees
+
+    Returns:
+        Updated Task or None if not found
+    """
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        return None
+
+    old_assignees = [str(u.id) for u in task.assignees]
+
+    if replace:
+        # Remove all existing assignees
+        task.assignees.clear()
+
+    # Add new assignees
+    for assignee_id in assignee_ids:
+        user = db.query(models.User).filter(models.User.id == assignee_id).first()
+        if user and user not in task.assignees:
+            task.assignees.append(user)
+
+    new_assignees = [str(u.id) for u in task.assignees]
+
+    # Record assignment change
+    if old_assignees != new_assignees:
+        change_type = models.TaskChangeType.REASSIGNED if old_assignees else models.TaskChangeType.ASSIGNED
+        history = models.TaskHistory(
+            task_id=task.id,
+            change_type=change_type,
+            field_name='assignees',
+            old_value=','.join(old_assignees) if old_assignees else None,
+            new_value=','.join(new_assignees),
+            changed_by=user_id,
+        )
+        db.add(history)
+
+    db.commit()
+    db.refresh(task)
+    logger.info(f"Assigned task {task.human_readable_id} to {len(task.assignees)} users")
+    return task
+
+
+def get_task_history(
+    db: Session,
+    task_id: UUID,
+    limit: int = 50,
+) -> list[models.TaskHistory]:
+    """
+    Get history for a task.
+
+    Args:
+        db: Database session
+        task_id: Task UUID
+        limit: Maximum number of entries to return
+
+    Returns:
+        List of TaskHistory entries
+    """
+    return db.query(models.TaskHistory).filter(
+        models.TaskHistory.task_id == task_id
+    ).order_by(
+        models.TaskHistory.changed_at.desc()
+    ).limit(limit).all()
+
+
+def get_my_tasks(
+    db: Session,
+    user_id: UUID,
+    organization_ids: Optional[list[UUID]] = None,
+    include_completed: bool = False,
+) -> list[models.Task]:
+    """
+    Get all tasks assigned to a user across all their organizations.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        organization_ids: Optional filter by organizations
+        include_completed: Include completed/cancelled tasks
+
+    Returns:
+        List of Tasks assigned to the user
+    """
+    query = db.query(models.Task).filter(
+        models.Task.assignees.any(models.User.id == user_id)
+    )
+
+    if organization_ids:
+        query = query.filter(models.Task.organization_id.in_(organization_ids))
+
+    if not include_completed:
+        query = query.filter(
+            models.Task.status.notin_([models.TaskStatus.COMPLETED, models.TaskStatus.CANCELLED])
+        )
+
+    # Order by priority then due_date
+    priority_order = [
+        models.TaskPriority.CRITICAL,
+        models.TaskPriority.HIGH,
+        models.TaskPriority.MEDIUM,
+        models.TaskPriority.LOW,
+    ]
+    query = query.order_by(
+        db.case(
+            {p: i for i, p in enumerate(priority_order)},
+            value=models.Task.priority
+        ),
+        models.Task.due_date.asc().nulls_last(),
+        models.Task.created_at.desc()
+    )
+
+    return query.all()
+
+
+def find_task_by_source(
+    db: Session,
+    source_type: str,
+    source_id: UUID,
+    task_type: Optional[models.TaskType] = None,
+    exclude_completed: bool = True,
+) -> Optional[models.Task]:
+    """
+    Find existing task for a source artifact.
+
+    Used to prevent duplicate tasks for the same source.
+
+    Args:
+        db: Database session
+        source_type: Task source type
+        source_id: Source artifact UUID
+        task_type: Optional task type filter
+        exclude_completed: Whether to exclude completed/cancelled tasks
+
+    Returns:
+        Existing task if found, None otherwise
+    """
+    query = db.query(models.Task).filter(
+        models.Task.source_type == source_type,
+        models.Task.source_id == source_id
+    )
+
+    if task_type:
+        query = query.filter(models.Task.task_type == task_type)
+
+    if exclude_completed:
+        query = query.filter(
+            models.Task.status.notin_([models.TaskStatus.COMPLETED, models.TaskStatus.CANCELLED])
+        )
+
+    return query.first()
+
+
+def get_tasks_by_source_id(
+    db: Session,
+    source_id: UUID,
+    include_completed: bool = False,
+) -> list[models.Task]:
+    """
+    Get all tasks associated with a source artifact.
+
+    Args:
+        db: Database session
+        source_id: Source artifact UUID
+        include_completed: Whether to include completed/cancelled tasks
+
+    Returns:
+        List of tasks
+    """
+    query = db.query(models.Task).filter(models.Task.source_id == source_id)
+
+    if not include_completed:
+        query = query.filter(
+            models.Task.status.notin_([models.TaskStatus.COMPLETED, models.TaskStatus.CANCELLED])
+        )
+
+    return query.order_by(models.Task.created_at.desc()).all()
