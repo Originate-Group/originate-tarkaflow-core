@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     UniqueConstraint,
     Table,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
