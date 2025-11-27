@@ -572,73 +572,73 @@ def get_tools() -> list[Tool]:
             }
         ),
         # ============================================================================
-        # Persona Scope Tools
+        # Agent Scope Tools (CR-009: Replaces Persona System)
         # ============================================================================
         Tool(
-            name="select_persona",
-            description="Set your workflow persona for this session (REQUIRED before any status transitions). "
-                       "\n\nIMPORTANT: You MUST call select_persona() before using transition_status() or "
-                       "changing status via update_requirement(). Without a persona set, all transitions are unauthorized."
+            name="select_agent",
+            description="Set the acting agent for this session (REQUIRED before any status transitions). "
+                       "\n\nIMPORTANT: You MUST call select_agent() before using transition_status() or "
+                       "changing status via update_requirement(). Without an agent set, all transitions are unauthorized."
                        "\n\nWHY THIS IS REQUIRED:"
-                       "\n• Enables audit trail of persona changes for compliance"
-                       "\n• Ensures explicit persona declaration before transitions"
-                       "\n• Prevents accidental unauthorized transitions"
-                       "\n\nPERSONA AUTHORIZATION:"
-                       "\n• Different transitions require different personas"
-                       "\n• Developer: draft→review, in_progress→implemented"
-                       "\n• Tester: implemented→validated (prevents self-validation)"
-                       "\n• Release Manager: validated→deployed"
-                       "\n• Product Owner: review→approved"
-                       "\n• Enterprise Architect: all transitions (governance override)"
+                       "\n• Enables audit trail showing 'director' (human) and 'actor' (agent)"
+                       "\n• Ensures explicit agent declaration before transitions"
+                       "\n• Agent roles (via RBAC) determine allowed transitions"
+                       "\n\nAGENT ACCOUNTS (use @tarka.internal domain):"
+                       "\n• developer@tarka.internal - draft→review, in_progress→implemented"
+                       "\n• tester@tarka.internal - implemented→validated (prevents self-validation)"
+                       "\n• release_manager@tarka.internal - validated→deployed"
+                       "\n• ea@tarka.internal - Enterprise Architect (all transitions)"
+                       "\n• code@tarka.internal - Claude Code (development tasks)"
+                       "\n• ba@tarka.internal - Business Analyst"
+                       "\n• csa@tarka.internal - Client Success Agent"
                        "\n\nCOMMON PATTERNS:"
-                       "\n• Start of session: select_persona(persona='developer') → work normally"
-                       "\n• Switch roles: select_persona(persona='tester') → now authorized for validation"
-                       "\n• Check current: get_persona() → verify before critical transitions"
-                       "\n\nRETURNS: Confirmation of persona set"
+                       "\n• Start of session: select_agent(agent_email='developer@tarka.internal') → work normally"
+                       "\n• Switch roles: select_agent(agent_email='tester@tarka.internal') → now authorized for validation"
+                       "\n• Check current: get_agent() → verify before critical transitions"
+                       "\n\nRETURNS: Confirmation of agent set"
                        "\n\nRELATED TOOLS:"
-                       "\n• get_persona() to check current persona"
-                       "\n• clear_persona() to remove persona (transitions will fail until re-selected)"
+                       "\n• get_agent() to check current agent"
+                       "\n• clear_agent() to remove agent (transitions will fail until re-selected)"
                        "\n• transition_status() and update_requirement() require this to be set first",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "persona": {
+                    "agent_email": {
                         "type": "string",
-                        "enum": ["enterprise_architect", "product_owner", "scrum_master", "developer", "tester", "release_manager"],
-                        "description": "The workflow persona to use for status transitions"
+                        "description": "The agent account email (e.g., 'developer@tarka.internal')"
                     }
                 },
-                "required": ["persona"]
+                "required": ["agent_email"]
             }
         ),
         Tool(
-            name="get_persona",
-            description="Query the current persona setting for this session. "
+            name="get_agent",
+            description="Query the current agent setting for this session. "
                        "\n\nWHEN TO USE:"
-                       "\n• Verify persona is set before making transitions"
-                       "\n• Check which persona will be used for audit logging"
+                       "\n• Verify agent is set before making transitions"
+                       "\n• Check which agent will be used for audit logging"
                        "\n\nRETURNS:"
-                       "\n• Current persona name if set"
-                       "\n• Message indicating no persona set otherwise",
+                       "\n• Current agent email if set"
+                       "\n• Message indicating no agent set otherwise",
             inputSchema={
                 "type": "object",
                 "properties": {}
             }
         ),
         Tool(
-            name="clear_persona",
-            description="Clear the persona setting for this session. "
-                       "\n\nWARNING: After clearing persona, ALL status transitions will fail until you call "
-                       "select_persona() again. Use this only when you want to explicitly block transitions."
+            name="clear_agent",
+            description="Clear the agent setting for this session. "
+                       "\n\nWARNING: After clearing agent, ALL status transitions will fail until you call "
+                       "select_agent() again. Use this only when you want to explicitly block transitions."
                        "\n\nWHEN TO USE:"
                        "\n• End of session cleanup"
                        "\n• When you want to ensure no accidental transitions"
                        "\n• Before handing off to another agent/user"
                        "\n\nEFFECT:"
-                       "\n• Removes persona from session"
+                       "\n• Removes agent from session"
                        "\n• transition_status() will return 403 Forbidden"
                        "\n• update_requirement() status changes will return 403 Forbidden"
-                       "\n\nRETURNS: Confirmation that persona was cleared",
+                       "\n\nRETURNS: Confirmation that agent was cleared",
             inputSchema={
                 "type": "object",
                 "properties": {}

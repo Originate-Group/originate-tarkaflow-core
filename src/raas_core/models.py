@@ -127,6 +127,13 @@ class EnforcementLevel(str, enum.Enum):
     MANDATORY = "mandatory"
 
 
+class UserType(str, enum.Enum):
+    """User type enum distinguishing humans from agent accounts (CR-009)."""
+
+    HUMAN = "human"
+    AGENT = "agent"
+
+
 class Organization(Base):
     """
     Organization model for workspaces/teams.
@@ -176,6 +183,13 @@ class User(Base):
     auth_provider = Column(String(50), nullable=False, default="keycloak")       # Future: support multiple providers
     email = Column(String(255), nullable=False, unique=True, index=True)
     full_name = Column(String(255))
+    # User type: human or agent (CR-009 Agent Service Accounts)
+    user_type = Column(
+        Enum(UserType, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=UserType.HUMAN,
+        index=True
+    )
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     is_superuser = Column(Boolean, nullable=False, default=False)
 
@@ -737,6 +751,15 @@ class TaskPriority(str, enum.Enum):
     CRITICAL = "critical"
 
 
+class ExecutionStatus(str, enum.Enum):
+    """Task execution status enum for agent task tracking (CR-009)."""
+
+    QUEUED = "queued"  # Task assigned to agent, awaiting execution
+    IN_PROGRESS = "in_progress"  # Agent is actively working on task
+    COMPLETED = "completed"  # Agent completed execution successfully
+    FAILED = "failed"  # Agent execution failed
+
+
 class TaskChangeType(str, enum.Enum):
     """Task history change type enum."""
 
@@ -816,6 +839,17 @@ class Task(Base):
     resolution_content = Column(Text, nullable=True)  # The answer/resolution to the clarification
     resolved_at = Column(DateTime, nullable=True)  # When the clarification was resolved
     resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Execution tracking fields (CR-009: Agent Service Accounts)
+    # These fields track agent execution of tasks
+    execution_status = Column(
+        Enum(ExecutionStatus, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=True,  # Null until task is assigned to an agent
+        index=True
+    )
+    execution_output = Column(JSONB, nullable=True)  # Execution artifacts: PR URL, commit SHA, etc.
+    execution_started_at = Column(DateTime, nullable=True)  # When agent started execution
+    execution_completed_at = Column(DateTime, nullable=True)  # When agent completed execution
 
     # Audit fields
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

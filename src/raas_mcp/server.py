@@ -46,10 +46,11 @@ else:
 # MCP Server instance
 app = Server("raas-mcp")
 
-# Session state for project and persona scope
+# Session state for project and agent scope (CR-009: agent replaces persona)
 # This is per-MCP-connection since each connection runs in its own process (stdio mode)
 _session_project_scope: Optional[dict] = None  # Stores {project_id, name, slug, organization_id}
-_session_persona: Optional[str] = None  # Stores persona name (e.g., "developer", "tester")
+_session_agent: Optional[str] = None  # Stores agent email (e.g., "developer@tarka.internal")
+_session_persona: Optional[str] = None  # Stores mapped role for backward compat
 
 
 @app.list_tools()
@@ -70,18 +71,18 @@ async def list_tools() -> list[Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageContent | EmbeddedResource]:
     """Handle MCP tool calls by delegating to shared handlers."""
-    global _session_project_scope, _session_persona
+    global _session_project_scope, _session_agent, _session_persona
 
     logger.info(f"Tool call: {name} with arguments: {arguments}")
 
     # Apply project scope defaults to arguments if applicable
     arguments = await handlers.apply_project_scope_defaults(name, arguments, _session_project_scope)
 
-    # Apply persona defaults and check for required persona
-    arguments, persona_error = await handlers.apply_persona_defaults(name, arguments, _session_persona)
-    if persona_error is not None:
-        # Return the error content directly - persona is required but not set
-        return persona_error
+    # Apply agent defaults and check for required agent (CR-009)
+    arguments, agent_error = await handlers.apply_agent_defaults(name, arguments, _session_agent)
+    if agent_error is not None:
+        # Return the error content directly - agent is required but not set
+        return agent_error
 
     # Prepare headers with PAT authentication if available
     headers = {}
@@ -118,10 +119,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "select_project": handlers.handle_select_project,
                 "get_project_scope": handlers.handle_get_project_scope,
                 "clear_project_scope": handlers.handle_clear_project_scope,
-                # Persona scope handlers
-                "select_persona": handlers.handle_select_persona,
-                "get_persona": handlers.handle_get_persona,
-                "clear_persona": handlers.handle_clear_persona,
+                # Agent scope handlers (CR-009: replaces persona)
+                "select_agent": handlers.handle_select_agent,
+                "get_agent": handlers.handle_get_agent,
+                "clear_agent": handlers.handle_clear_agent,
                 # User handlers
                 "list_users": handlers.handle_list_users,
                 "search_users": handlers.handle_search_users,
@@ -174,33 +175,40 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 logger.warning(f"Unknown tool requested: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-            # Special case for get_persona - return actual persona value
-            if name == "get_persona":
-                if _session_persona:
+            # Special case for get_agent - return actual agent value (CR-009)
+            if name == "get_agent":
+                if _session_agent:
+                    role = handlers.AGENT_ROLE_MAP.get(_session_agent, "unknown")
                     return [TextContent(
                         type="text",
-                        text=f"Current persona: {_session_persona}\n\n"
-                             f"This persona will be used for status transitions unless overridden."
+                        text=f"Current agent: {_session_agent}\n"
+                             f"Role: {role}\n\n"
+                             f"This agent will be used for status transitions unless overridden."
                     )]
                 else:
                     return [TextContent(
                         type="text",
-                        text="No persona is currently set.\n\n"
-                             "Use select_persona(persona='developer') to set a default persona for status transitions."
+                        text="No agent is currently set.\n\n"
+                             "Use select_agent(agent_email='developer@tarka.internal') to set a default agent for status transitions."
                     )]
 
             # Execute handler and get result
             # Handlers return (content, scope_update) where scope_update can be:
             # - dict with project_id: project scope change
-            # - dict with _persona key: persona scope change
+            # - dict with _agent key: agent scope change (CR-009)
             # - None: no change
             # - Same as current: no change
             content, scope_update = await handler(arguments, client, _session_project_scope)
 
             # Update session scope if handler modified it
             if scope_update is not None and scope_update is not _session_project_scope:
-                # Check if this is a persona scope update
-                if isinstance(scope_update, dict) and "_persona" in scope_update:
+                # Check if this is an agent scope update (CR-009)
+                if isinstance(scope_update, dict) and "_agent" in scope_update:
+                    _session_agent = scope_update.get("_agent")
+                    _session_persona = scope_update.get("_persona")  # For backward compat
+                    logger.info(f"Updated session agent to: {_session_agent} (role: {_session_persona})")
+                elif isinstance(scope_update, dict) and "_persona" in scope_update:
+                    # Legacy persona update (backward compat)
                     _session_persona = scope_update.get("_persona")
                     logger.info(f"Updated session persona to: {_session_persona}")
                 else:

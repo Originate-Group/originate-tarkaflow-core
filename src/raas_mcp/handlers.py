@@ -509,84 +509,101 @@ async def apply_project_scope_defaults(
 
 
 # ============================================================================
-# Persona Scope Handlers
+# Agent Scope Handlers (CR-009: Replaces Persona System)
 # ============================================================================
 
-# Valid personas for workflow authorization
-VALID_PERSONAS = {
-    "enterprise_architect",
-    "product_owner",
-    "scrum_master",
-    "developer",
-    "tester",
-    "release_manager",
+# Valid agent emails for workflow authorization (CR-009)
+# Agent accounts use @tarka.internal domain
+VALID_AGENT_EMAILS = {
+    "code@tarka.internal",        # Claude Code (development tasks)
+    "csa@tarka.internal",         # Client Success Agent
+    "ba@tarka.internal",          # Business Analyst
+    "ea@tarka.internal",          # Enterprise Architect (all transitions)
+    "developer@tarka.internal",   # Developer role
+    "tester@tarka.internal",      # Tester role
+    "release_manager@tarka.internal",  # Release Manager role
+}
+
+# Map agent emails to their role for authorization
+# This replaces the old persona->transition matrix with RBAC
+AGENT_ROLE_MAP = {
+    "code@tarka.internal": "developer",
+    "csa@tarka.internal": "product_owner",
+    "ba@tarka.internal": "product_owner",
+    "ea@tarka.internal": "enterprise_architect",
+    "developer@tarka.internal": "developer",
+    "tester@tarka.internal": "tester",
+    "release_manager@tarka.internal": "release_manager",
 }
 
 
-async def handle_select_persona(
+async def handle_select_agent(
     arguments: dict,
     client: httpx.AsyncClient,
     current_scope: Optional[dict] = None
 ) -> tuple[list[TextContent], Optional[dict]]:
-    """Handle select_persona tool call.
+    """Handle select_agent tool call (CR-009).
 
     Args:
-        arguments: Tool arguments containing persona
+        arguments: Tool arguments containing agent_email
         client: HTTP client (not used for this operation)
         current_scope: Current project scope (passed through unchanged)
 
     Returns:
-        Tuple of (response content, persona scope marker)
+        Tuple of (response content, agent scope marker)
     """
-    persona = arguments["persona"].lower()
+    agent_email = arguments["agent_email"].lower()
 
-    # Validate persona
-    if persona not in VALID_PERSONAS:
-        valid_list = ", ".join(sorted(VALID_PERSONAS))
+    # Validate agent email
+    if agent_email not in VALID_AGENT_EMAILS:
+        valid_list = ", ".join(sorted(VALID_AGENT_EMAILS))
         return [TextContent(
             type="text",
-            text=f"Invalid persona: {persona}\n\nValid personas: {valid_list}"
+            text=f"Invalid agent: {agent_email}\n\nValid agents: {valid_list}"
         )], current_scope
 
-    logger.info(f"Set persona to: {persona}")
+    role = AGENT_ROLE_MAP.get(agent_email, "unknown")
+    logger.info(f"Set agent to: {agent_email} (role: {role})")
 
     content = [TextContent(
         type="text",
-        text=f"Persona set to: {persona}\n\n"
-             f"All status transitions will now use this persona for authorization.\n"
-             f"The persona is logged in the audit trail for compliance."
+        text=f"Agent set to: {agent_email}\n"
+             f"Role: {role}\n\n"
+             f"All status transitions will now use this agent for authorization.\n"
+             f"Audit trail will show: director=<your user>, actor={agent_email}"
     )]
 
-    # Return special marker dict to signal persona scope change
-    return content, {"_persona": persona}
+    # Return special marker dict to signal agent scope change
+    # We store both the email and the mapped role for backward compatibility
+    return content, {"_agent": agent_email, "_persona": role}
 
 
-async def handle_get_persona(
+async def handle_get_agent(
     arguments: dict,
     client: httpx.AsyncClient,
     current_scope: Optional[dict] = None
 ) -> tuple[list[TextContent], Optional[dict]]:
-    """Handle get_persona tool call.
+    """Handle get_agent tool call (CR-009).
 
-    Note: This handler doesn't have direct access to _session_persona,
+    Note: This handler doesn't have direct access to _session_agent,
     so the server must pass it differently. For now, we return a message
-    that the persona should be checked via server state.
+    that the agent should be checked via server state.
     """
-    # The actual persona value is managed by the server
+    # The actual agent value is managed by the server
     # This handler is called for informational purposes
     content = [TextContent(
         type="text",
-        text="Use select_persona() to set a persona, or check the server logs for current session persona."
+        text="Use select_agent() to set an agent, or check the server logs for current session agent."
     )]
     return content, current_scope
 
 
-async def handle_clear_persona(
+async def handle_clear_agent(
     arguments: dict,
     client: httpx.AsyncClient,
     current_scope: Optional[dict] = None
 ) -> tuple[list[TextContent], Optional[dict]]:
-    """Handle clear_persona tool call.
+    """Handle clear_agent tool call (CR-009).
 
     Args:
         arguments: Tool arguments (empty for this tool)
@@ -594,88 +611,98 @@ async def handle_clear_persona(
         current_scope: Current project scope (passed through unchanged)
 
     Returns:
-        Tuple of (response content, persona scope marker with None)
+        Tuple of (response content, agent scope marker with None)
     """
-    logger.info("Cleared persona")
+    logger.info("Cleared agent")
 
     content = [TextContent(
         type="text",
-        text="Persona cleared.\n\n"
+        text="Agent cleared.\n\n"
              "WARNING: All status transitions will now fail with 403 Forbidden.\n"
-             "You must call select_persona() again before using transition_status() "
+             "You must call select_agent() again before using transition_status() "
              "or update_requirement()."
     )]
 
-    # Return special marker to clear persona
-    return content, {"_persona": None}
+    # Return special marker to clear both agent and persona (for backward compat)
+    return content, {"_agent": None, "_persona": None}
 
 
-async def apply_persona_defaults(
+async def apply_agent_defaults(
     tool_name: str,
     arguments: dict,
-    current_persona: Optional[str] = None
+    current_agent: Optional[str] = None
 ) -> Tuple[dict, Optional[List[TextContent]]]:
-    """Apply session persona for tools that require persona authorization.
+    """Apply session agent for tools that require agent authorization (CR-009).
 
     Args:
         tool_name: Name of the tool being called
         arguments: Tool arguments (may be modified)
-        current_persona: Current session persona
+        current_agent: Current session agent email
 
     Returns:
         Tuple of (modified arguments, error content or None)
         If error content is not None, the caller should return it instead of proceeding.
     """
-    # Tools that REQUIRE persona for status transitions
-    persona_required_tools = {
-        "transition_status",  # Always requires persona
+    # Tools that REQUIRE agent for status transitions
+    agent_required_tools = {
+        "transition_status",  # Always requires agent
     }
 
-    # Tools that require persona only if status is being changed
-    persona_conditional_tools = {
-        "update_requirement",  # Requires persona only if status field is present
+    # Tools that require agent only if status is being changed
+    agent_conditional_tools = {
+        "update_requirement",  # Requires agent only if status field is present
     }
 
-    # Check if this is a tool that requires persona
-    requires_persona = False
+    # Check if this is a tool that requires agent
+    requires_agent = False
 
-    if tool_name in persona_required_tools:
-        requires_persona = True
-    elif tool_name in persona_conditional_tools:
-        # update_requirement requires persona if:
+    if tool_name in agent_required_tools:
+        requires_agent = True
+    elif tool_name in agent_conditional_tools:
+        # update_requirement requires agent if:
         # 1. "status" field is explicitly provided, OR
         # 2. "content" field is provided (could contain status in frontmatter)
-        # We can't reliably parse frontmatter here, so we require persona
+        # We can't reliably parse frontmatter here, so we require agent
         # for any update that might affect status.
         if "status" in arguments or "content" in arguments:
-            requires_persona = True
-        # If only updating depends_on or other non-status fields, no persona needed
+            requires_agent = True
+        # If only updating depends_on or other non-status fields, no agent needed
 
-    if not requires_persona:
+    if not requires_agent:
         return arguments, None
 
-    # Persona is required but not set
-    if current_persona is None:
+    # Agent is required but not set
+    if current_agent is None:
         error_content = [TextContent(
             type="text",
-            text="ERROR: No persona set for status transition.\n\n"
-                 "You MUST call select_persona() before using this tool.\n\n"
-                 "Example: select_persona(persona='developer')\n\n"
-                 "Available personas:\n"
-                 "• developer - for draft→review, in_progress→implemented\n"
-                 "• product_owner - for review→approved\n"
-                 "• tester - for implemented→validated\n"
-                 "• release_manager - for validated→deployed\n"
-                 "• enterprise_architect - governance override (all transitions)\n"
-                 "• scrum_master - sprint coordination"
+            text="ERROR: No agent set for status transition.\n\n"
+                 "You MUST call select_agent() before using this tool.\n\n"
+                 "Example: select_agent(agent_email='developer@tarka.internal')\n\n"
+                 "Available agents:\n"
+                 "• developer@tarka.internal - for draft→review, in_progress→implemented\n"
+                 "• tester@tarka.internal - for implemented→validated\n"
+                 "• release_manager@tarka.internal - for validated→deployed\n"
+                 "• ea@tarka.internal - Enterprise Architect (all transitions)\n"
+                 "• code@tarka.internal - Claude Code (development tasks)\n"
+                 "• ba@tarka.internal - Business Analyst\n"
+                 "• csa@tarka.internal - Client Success Agent"
         )]
         return arguments, error_content
 
-    # Apply persona to arguments
-    arguments["persona"] = current_persona
-    logger.info(f"Using session persona: {current_persona}")
+    # Map agent to persona for backward compatibility with existing authorization
+    role = AGENT_ROLE_MAP.get(current_agent, "developer")
+    arguments["persona"] = role
+    logger.info(f"Using session agent: {current_agent} (role: {role})")
 
     return arguments, None
+
+
+# Backward compatibility aliases (CR-009 transition period)
+# TODO: Remove after full migration
+handle_select_persona = handle_select_agent
+handle_get_persona = handle_get_agent
+handle_clear_persona = handle_clear_agent
+apply_persona_defaults = apply_agent_defaults
 
 
 # ============================================================================

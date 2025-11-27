@@ -22,6 +22,7 @@ from .models import (
     TaskStatus,
     TaskPriority,
     TaskChangeType,
+    ExecutionStatus,  # CR-009: Agent task execution tracking
 )
 
 
@@ -384,6 +385,7 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     full_name: Optional[str] = None
+    user_type: str = "human"  # CR-009: human or agent
     is_active: bool
     created_at: datetime
 
@@ -694,6 +696,11 @@ class TaskResponse(BaseModel):
     resolution_content: Optional[str] = None
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[UUID] = None
+    # Execution tracking fields (CR-009: Agent Service Accounts)
+    execution_status: Optional[ExecutionStatus] = None
+    execution_output: Optional[dict] = None
+    execution_started_at: Optional[datetime] = None
+    execution_completed_at: Optional[datetime] = None
     # Assignees
     assignee_count: int = Field(description="Number of assignees")
     # Audit fields
@@ -723,6 +730,8 @@ class TaskListItem(BaseModel):
     # Clarification task fields (CR-003) - for display in list view
     artifact_type: Optional[str] = None
     artifact_id: Optional[UUID] = None
+    # Execution tracking (CR-009) - for visibility in list view
+    execution_status: Optional[ExecutionStatus] = None
     assignee_count: int = Field(description="Number of assignees")
     is_overdue: bool = Field(description="True if due_date is in the past and status is not completed/cancelled")
     created_at: datetime
