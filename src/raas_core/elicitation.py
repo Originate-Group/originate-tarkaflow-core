@@ -209,7 +209,7 @@ def resolve_clarification_point(
 
     Automatically completes the linked task in the unified task queue (RAAS-FEAT-091).
     """
-    point = get_clarification_point(db, point_id)
+    point = get_clarification_point(db, str(point_id))
     if not point:
         return None
 
