@@ -2976,7 +2976,7 @@ def get_my_tasks(
         models.TaskPriority.LOW,
     ]
     query = query.order_by(
-        db.case(
+        case(
             {p: i for i, p in enumerate(priority_order)},
             value=models.Task.priority
         ),
