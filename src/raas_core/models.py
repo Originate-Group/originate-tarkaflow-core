@@ -577,12 +577,18 @@ class Guardrail(Base):
 
 
 class ChangeRequestStatus(str, enum.Enum):
-    """Change request lifecycle status enum (RAAS-FEAT-077)."""
+    """Change request lifecycle status enum (RAAS-FEAT-077).
+
+    Lifecycle: draft -> review -> approved -> completed
+    Terminal states: completed, cancelled, superseded
+    """
 
     DRAFT = "draft"
     REVIEW = "review"
     APPROVED = "approved"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"      # CR abandoned (from draft, review, or approved)
+    SUPERSEDED = "superseded"    # CR replaced by another CR (from approved only)
 
 
 # Association table for change request affects (declared scope)
@@ -650,10 +656,18 @@ class ChangeRequest(Base):
     # Completion tracking
     completed_at = Column(DateTime)
 
+    # Cancellation tracking (TASK-030)
+    cancelled_at = Column(DateTime)
+
+    # Supersession tracking (TASK-030) - when CR is replaced by another
+    superseded_at = Column(DateTime)
+    superseded_by_id = Column(UUID(as_uuid=True), ForeignKey("change_requests.id", ondelete="SET NULL"))
+
     # Relationships
     organization = relationship("Organization")
     requestor = relationship("User", foreign_keys=[requestor_id])
     approved_by = relationship("User", foreign_keys=[approved_by_id])
+    superseded_by = relationship("ChangeRequest", remote_side="ChangeRequest.id", foreign_keys=[superseded_by_id])
 
     # Affects list - declared scope of what CR intends to modify (immutable after review)
     affects = relationship(

@@ -56,6 +56,11 @@ def _format_change_request_response(cr: models.ChangeRequest) -> dict:
         "approved_by_id": cr.approved_by_id,
         "approved_by_email": cr.approved_by.email if cr.approved_by else None,
         "completed_at": cr.completed_at,
+        # TASK-030: Cancellation and supersession tracking
+        "cancelled_at": cr.cancelled_at,
+        "superseded_at": cr.superseded_at,
+        "superseded_by_id": cr.superseded_by_id,
+        "superseded_by_hrid": cr.superseded_by.human_readable_id if cr.superseded_by else None,
         "created_at": cr.created_at,
         "updated_at": cr.updated_at,
         "affects": [req.id for req in cr.affects] if cr.affects else [],
@@ -196,6 +201,7 @@ async def transition_change_request(
             cr_id=str(existing.id),
             new_status=transition.new_status,
             user_id=current_user.id if current_user else None,
+            superseding_cr_id=transition.superseding_cr_id,  # TASK-030
         )
         logger.info(f"Transitioned change request {updated_cr.human_readable_id} to {transition.new_status.value}")
         return _format_change_request_response(updated_cr)

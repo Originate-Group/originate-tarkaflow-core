@@ -1308,13 +1308,19 @@ async def handle_transition_change_request(
     """Transition a change request to a new status."""
     cr_id = arguments["cr_id"]
     new_status = arguments["new_status"]
+    superseding_cr_id = arguments.get("superseding_cr_id")  # TASK-030
     # Normalize enum value to lowercase
     if isinstance(new_status, str):
         new_status = new_status.lower()
 
+    # Build request body (TASK-030: include superseding_cr_id for superseded transitions)
+    body = {"new_status": new_status}
+    if superseding_cr_id:
+        body["superseding_cr_id"] = superseding_cr_id
+
     response = await client.post(
         f"/change-requests/{cr_id}/transition",
-        json={"new_status": new_status}
+        json=body
     )
     response.raise_for_status()
     result = response.json()
@@ -1337,6 +1343,13 @@ async def handle_transition_change_request(
         text += "Submitted for review. Awaiting approval."
     elif result['status'] == 'draft':
         text += "Returned to draft for revision."
+    elif result['status'] == 'cancelled':  # TASK-030
+        text += f"Cancelled at: {result['cancelled_at']}\n"
+        text += "This CR has been abandoned and cannot be used."
+    elif result['status'] == 'superseded':  # TASK-030
+        text += f"Superseded at: {result['superseded_at']}\n"
+        text += f"Superseded by: {result['superseded_by_hrid']}\n"
+        text += "This CR has been replaced and cannot be used."
 
     return [TextContent(type="text", text=text)], current_scope
 

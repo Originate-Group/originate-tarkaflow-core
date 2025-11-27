@@ -522,7 +522,8 @@ class ChangeRequestCreate(BaseModel):
 class ChangeRequestTransition(BaseModel):
     """Schema for transitioning a change request status."""
 
-    new_status: ChangeRequestStatus = Field(..., description="Target status (draft -> review -> approved -> completed)")
+    new_status: ChangeRequestStatus = Field(..., description="Target status (draft -> review -> approved -> completed -> cancelled/superseded)")
+    superseding_cr_id: Optional[str] = Field(None, description="UUID or HRID of superseding CR (required when new_status='superseded')")
 
 
 class ChangeRequestResponse(BaseModel):
@@ -545,6 +546,14 @@ class ChangeRequestResponse(BaseModel):
 
     # Completion tracking
     completed_at: Optional[datetime] = None
+
+    # Cancellation tracking (TASK-030)
+    cancelled_at: Optional[datetime] = None
+
+    # Supersession tracking (TASK-030)
+    superseded_at: Optional[datetime] = None
+    superseded_by_id: Optional[UUID] = None
+    superseded_by_hrid: Optional[str] = None  # e.g., CR-007
 
     # Timestamps
     created_at: datetime
@@ -571,6 +580,8 @@ class ChangeRequestListItem(BaseModel):
     updated_at: datetime
     affects_count: int = Field(description="Count of requirements in declared scope")
     modifications_count: int = Field(description="Count of requirements actually modified")
+    # Supersession tracking (TASK-030)
+    superseded_by_hrid: Optional[str] = None  # e.g., CR-007 if superseded
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 

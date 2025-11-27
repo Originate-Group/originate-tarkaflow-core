@@ -2323,27 +2323,29 @@ def transition_change_request(
     cr_id: str,
     new_status: models.ChangeRequestStatus,
     user_id: Optional[UUID] = None,
+    superseding_cr_id: Optional[str] = None,
 ) -> models.ChangeRequest:
     """
     Transition a change request to a new status.
 
     Valid transitions:
-    - draft -> review
-    - review -> approved
-    - review -> draft
-    - approved -> completed
+    - draft -> review, cancelled
+    - review -> approved, draft, cancelled
+    - approved -> completed, cancelled, superseded
+    - completed, cancelled, superseded -> (terminal states)
 
     Args:
         db: Database session
-        cr_id: Change request UUID
+        cr_id: Change request UUID or human-readable ID
         new_status: Target status
         user_id: User UUID (for approval tracking)
+        superseding_cr_id: UUID or HRID of the CR that supersedes this one (required for superseded transition)
 
     Returns:
         Updated change request
 
     Raises:
-        ValueError: If transition is invalid
+        ValueError: If transition is invalid or superseding_cr_id missing for superseded transition
     """
     cr = get_change_request(db, cr_id)
     if not cr:
@@ -2352,15 +2354,25 @@ def transition_change_request(
     current_status = cr.status
     from datetime import datetime
 
-    # Define valid transitions
+    # Define valid transitions (TASK-030: added cancelled and superseded)
     valid_transitions = {
-        models.ChangeRequestStatus.DRAFT: [models.ChangeRequestStatus.REVIEW],
+        models.ChangeRequestStatus.DRAFT: [
+            models.ChangeRequestStatus.REVIEW,
+            models.ChangeRequestStatus.CANCELLED,
+        ],
         models.ChangeRequestStatus.REVIEW: [
             models.ChangeRequestStatus.APPROVED,
             models.ChangeRequestStatus.DRAFT,
+            models.ChangeRequestStatus.CANCELLED,
         ],
-        models.ChangeRequestStatus.APPROVED: [models.ChangeRequestStatus.COMPLETED],
-        models.ChangeRequestStatus.COMPLETED: [],  # Terminal state
+        models.ChangeRequestStatus.APPROVED: [
+            models.ChangeRequestStatus.COMPLETED,
+            models.ChangeRequestStatus.CANCELLED,
+            models.ChangeRequestStatus.SUPERSEDED,
+        ],
+        models.ChangeRequestStatus.COMPLETED: [],    # Terminal state
+        models.ChangeRequestStatus.CANCELLED: [],    # Terminal state (TASK-030)
+        models.ChangeRequestStatus.SUPERSEDED: [],   # Terminal state (TASK-030)
     }
 
     # Same-status is a no-op
@@ -2375,6 +2387,16 @@ def transition_change_request(
             f"Valid transitions from {current_status.value}: {', '.join(allowed) or 'none'}"
         )
 
+    # Superseded transition requires a superseding CR (TASK-030)
+    if new_status == models.ChangeRequestStatus.SUPERSEDED:
+        if not superseding_cr_id:
+            raise ValueError("superseding_cr_id is required when transitioning to superseded status")
+        superseding_cr = get_change_request(db, superseding_cr_id)
+        if not superseding_cr:
+            raise ValueError(f"Superseding change request not found: {superseding_cr_id}")
+        if superseding_cr.id == cr.id:
+            raise ValueError("A change request cannot supersede itself")
+
     # Update status
     cr.status = new_status
 
@@ -2386,6 +2408,15 @@ def transition_change_request(
     # Set completion tracking if moving to completed
     if new_status == models.ChangeRequestStatus.COMPLETED:
         cr.completed_at = datetime.utcnow()
+
+    # Set cancellation tracking (TASK-030)
+    if new_status == models.ChangeRequestStatus.CANCELLED:
+        cr.cancelled_at = datetime.utcnow()
+
+    # Set supersession tracking (TASK-030)
+    if new_status == models.ChangeRequestStatus.SUPERSEDED:
+        cr.superseded_at = datetime.utcnow()
+        cr.superseded_by_id = superseding_cr.id
 
     db.commit()
     db.refresh(cr)

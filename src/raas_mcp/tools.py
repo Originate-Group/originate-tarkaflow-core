@@ -1304,9 +1304,10 @@ def get_tools() -> list[Tool]:
             description="List and filter change requests with pagination. "
                        "\n\nFILTERS:"
                        "\n• organization_id: Filter by organization UUID"
-                       "\n• status: Filter by status (draft, review, approved, completed)"
+                       "\n• status: Filter by status (draft, review, approved, completed, cancelled, superseded)"
                        "\n\nRETURNS: Paginated list with lightweight items"
                        "\n• Each item includes: id, human_readable_id, justification, status, timestamps, counts"
+                       "\n• Superseded CRs include superseded_by_hrid to show which CR replaced them"
                        "\n• Use get_change_request() for full details"
                        "\n\nCOMMON PATTERNS:"
                        "\n• Find approved CRs: list_change_requests(status='approved')"
@@ -1320,7 +1321,7 @@ def get_tools() -> list[Tool]:
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["draft", "review", "approved", "completed"],
+                        "enum": ["draft", "review", "approved", "completed", "cancelled", "superseded"],
                         "description": "Filter by status (optional)"
                     },
                     "page": {
@@ -1338,20 +1339,28 @@ def get_tools() -> list[Tool]:
             name="transition_change_request",
             description="Transition a change request to a new status. "
                        "\n\nCR LIFECYCLE: draft -> review -> approved -> completed"
+                       "\n\nTERMINAL STATES: completed, cancelled, superseded"
                        "\n\nVALID TRANSITIONS:"
                        "\n• draft -> review (submit for review)"
+                       "\n• draft -> cancelled (abandon before review)"
                        "\n• review -> approved (approve the CR)"
                        "\n• review -> draft (send back for revision)"
+                       "\n• review -> cancelled (reject during review)"
                        "\n• approved -> completed (mark as done)"
-                       "\n\nAPPROVAL TRACKING:"
+                       "\n• approved -> cancelled (abandon after approval)"
+                       "\n• approved -> superseded (replaced by another CR - requires superseding_cr_id)"
+                       "\n\nTRACKING:"
                        "\n• Moving to 'approved' records approved_at and approved_by"
                        "\n• Moving to 'completed' records completed_at"
+                       "\n• Moving to 'cancelled' records cancelled_at"
+                       "\n• Moving to 'superseded' records superseded_at and superseded_by"
                        "\n\nPERMISSIONS:"
                        "\n• Approval requires admin role"
                        "\n• Other transitions require member role"
                        "\n\nERRORS:"
                        "\n• 404: Change request not found"
                        "\n• 400: Invalid transition"
+                       "\n• 400: superseding_cr_id required for superseded transition"
                        "\n• 403: Forbidden (insufficient permissions)",
             inputSchema={
                 "type": "object",
@@ -1362,8 +1371,12 @@ def get_tools() -> list[Tool]:
                     },
                     "new_status": {
                         "type": "string",
-                        "enum": ["draft", "review", "approved", "completed"],
+                        "enum": ["draft", "review", "approved", "completed", "cancelled", "superseded"],
                         "description": "Target status"
+                    },
+                    "superseding_cr_id": {
+                        "type": "string",
+                        "description": "UUID or HRID of the CR that supersedes this one (required when new_status='superseded')"
                     }
                 },
                 "required": ["cr_id", "new_status"]
