@@ -637,11 +637,12 @@ class ChangeRequest(Base):
     # Requestor tracking
     requestor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
 
-    # Status - 4-state lifecycle
+    # Status - lifecycle (stored as VARCHAR to match migration 019 schema)
+    # Using String instead of Enum because the database uses VARCHAR(20) with CHECK constraint
     status = Column(
-        Enum(ChangeRequestStatus, values_callable=lambda x: [e.value for e in x]),
+        String(20),
         nullable=False,
-        default=ChangeRequestStatus.DRAFT,
+        default=ChangeRequestStatus.DRAFT.value,
         index=True
     )
 
