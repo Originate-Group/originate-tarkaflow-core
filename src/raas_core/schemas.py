@@ -993,7 +993,13 @@ class ElicitationSessionAddMessage(BaseModel):
 
 
 class ElicitationSessionResponse(BaseModel):
-    """Schema for elicitation session response."""
+    """Schema for elicitation session response.
+
+    Includes enriched context for session resumption (RAAS-FEAT-090):
+    - Target artifact human-readable ID for context restoration
+    - Assignee details (email, name) for display
+    - Clarification point human-readable ID for linking
+    """
 
     id: UUID
     human_readable_id: Optional[str] = None
@@ -1001,13 +1007,17 @@ class ElicitationSessionResponse(BaseModel):
     project_id: Optional[UUID] = None
     target_artifact_type: str
     target_artifact_id: Optional[UUID] = None
+    target_artifact_human_readable_id: Optional[str] = None  # e.g., RAAS-FEAT-042
     assignee_id: Optional[UUID] = None
+    assignee_email: Optional[str] = None  # For display/context
+    assignee_name: Optional[str] = None   # For display/context
     status: str
     conversation_history: List[dict]
     partial_draft: Optional[dict] = None
     identified_gaps: List[dict]
     progress: dict
     clarification_point_id: Optional[UUID] = None
+    clarification_point_human_readable_id: Optional[str] = None  # e.g., CLAR-001
     started_at: datetime
     last_activity_at: datetime
     completed_at: Optional[datetime] = None
@@ -1018,7 +1028,10 @@ class ElicitationSessionResponse(BaseModel):
 
 
 class ElicitationSessionListItem(BaseModel):
-    """Schema for elicitation session list item (lightweight)."""
+    """Schema for elicitation session list item (lightweight).
+
+    Includes enriched context fields (RAAS-FEAT-090) for quick scanning.
+    """
 
     id: UUID
     human_readable_id: Optional[str] = None
@@ -1026,9 +1039,13 @@ class ElicitationSessionListItem(BaseModel):
     project_id: Optional[UUID] = None
     target_artifact_type: str
     target_artifact_id: Optional[UUID] = None
+    target_artifact_human_readable_id: Optional[str] = None  # e.g., RAAS-FEAT-042
     assignee_id: Optional[UUID] = None
+    assignee_email: Optional[str] = None
+    assignee_name: Optional[str] = None
     status: str
     clarification_point_id: Optional[UUID] = None
+    clarification_point_human_readable_id: Optional[str] = None  # e.g., CLAR-001
     started_at: datetime
     last_activity_at: datetime
     message_count: int = 0
