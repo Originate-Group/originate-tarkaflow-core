@@ -27,6 +27,7 @@ from .schemas import (
     ElicitationSessionCreate, ElicitationSessionUpdate, ElicitationSessionAddMessage,
     GapFinding,
 )
+from . import task_sources
 
 
 # =============================================================================
@@ -39,7 +40,11 @@ def create_clarification_point(
     data: ClarificationPointCreate,
     created_by: Optional[UUID] = None
 ) -> ClarificationPoint:
-    """Create a new clarification point."""
+    """Create a new clarification point.
+
+    Automatically creates a task in the unified task queue (RAAS-FEAT-091)
+    so stakeholders see clarification work alongside other tasks.
+    """
     # Normalize priority to lowercase for enum lookup (handles "BLOCKING" -> "blocking")
     priority_value = data.priority.lower() if data.priority else "medium"
     point = ClarificationPoint(
@@ -58,6 +63,10 @@ def create_clarification_point(
     db.add(point)
     db.commit()
     db.refresh(point)
+
+    # RAAS-FEAT-091: Auto-create task in unified task queue
+    task_sources.create_clarification_point_task(db, point, created_by)
+
     return point
 
 
@@ -196,7 +205,10 @@ def resolve_clarification_point(
     data: ClarificationPointResolve,
     resolved_by: UUID,
 ) -> Optional[ClarificationPoint]:
-    """Resolve a clarification point with an answer."""
+    """Resolve a clarification point with an answer.
+
+    Automatically completes the linked task in the unified task queue (RAAS-FEAT-091).
+    """
     point = get_clarification_point(db, point_id)
     if not point:
         return None
@@ -209,6 +221,12 @@ def resolve_clarification_point(
 
     db.commit()
     db.refresh(point)
+
+    # RAAS-FEAT-091: Auto-complete linked task in unified task queue
+    task_sources.complete_clarification_point_task(
+        db, point, resolved_by, data.resolution_content
+    )
+
     return point
 
 
