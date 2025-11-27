@@ -1054,7 +1054,7 @@ class ElicitationSessionListResponse(BaseModel):
 class GapAnalysisRequest(BaseModel):
     """Schema for requesting gap analysis on a requirement."""
 
-    requirement_id: UUID
+    requirement_id: str  # Accepts UUID or human-readable ID (e.g., CAAS-EPIC-006)
     include_children: bool = False
 
 

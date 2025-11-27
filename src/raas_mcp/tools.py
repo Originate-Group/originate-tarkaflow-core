@@ -1804,7 +1804,7 @@ def get_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "requirement_id": {"type": "string", "description": "UUID of the requirement to analyze"},
+                    "requirement_id": {"type": "string", "description": "UUID or human-readable ID (e.g., CAAS-EPIC-006) of the requirement to analyze"},
                     "include_children": {"type": "boolean", "description": "Also analyze child requirements (default: false)"}
                 },
                 "required": ["requirement_id"]
