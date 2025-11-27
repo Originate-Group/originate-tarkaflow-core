@@ -3,10 +3,12 @@ CRUD operations for AI-Driven Requirements Elicitation & Verification.
 RAAS-EPIC-026
 
 Components:
-- RAAS-COMP-060: Clarification Points Management
 - RAAS-COMP-062: Question Framework Repository
 - RAAS-COMP-063: Elicitation Session Management
 - RAAS-COMP-064: Gap Analyzer
+
+NOTE: CR-004 removed RAAS-COMP-060 (Clarification Points Management).
+Clarifications are now managed as tasks with task_type='clarification'.
 """
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -16,240 +18,24 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
 from .models import (
-    ClarificationPoint, ClarificationStatus, ClarificationPriority,
     QuestionFramework,
     ElicitationSession, ElicitationSessionStatus,
     Requirement,
 )
 from .schemas import (
-    ClarificationPointCreate, ClarificationPointUpdate, ClarificationPointResolve,
     QuestionFrameworkCreate, QuestionFrameworkUpdate,
     ElicitationSessionCreate, ElicitationSessionUpdate, ElicitationSessionAddMessage,
     GapFinding,
 )
-from . import task_sources
 
 
-# =============================================================================
-# RAAS-COMP-060: Clarification Points Management
-# =============================================================================
-
-
-def create_clarification_point(
-    db: Session,
-    data: ClarificationPointCreate,
-    created_by: Optional[UUID] = None
-) -> ClarificationPoint:
-    """Create a new clarification point.
-
-    Automatically creates a task in the unified task queue (RAAS-FEAT-091)
-    so stakeholders see clarification work alongside other tasks.
-    """
-    # Normalize priority to lowercase for enum lookup (handles "BLOCKING" -> "blocking")
-    priority_value = data.priority.lower() if data.priority else "medium"
-    point = ClarificationPoint(
-        organization_id=data.organization_id,
-        project_id=data.project_id,
-        artifact_type=data.artifact_type,
-        artifact_id=data.artifact_id,
-        title=data.title,
-        description=data.description,
-        context=data.context,
-        priority=ClarificationPriority(priority_value),
-        assignee_id=data.assignee_id,
-        due_date=data.due_date,
-        created_by=created_by,
-    )
-    db.add(point)
-    db.commit()
-    db.refresh(point)
-
-    # RAAS-FEAT-091: Auto-create task in unified task queue
-    task_sources.create_clarification_point_task(db, point, created_by)
-
-    return point
-
-
-def get_clarification_point(
-    db: Session,
-    point_id: str
-) -> Optional[ClarificationPoint]:
-    """Get a clarification point by UUID or human-readable ID (e.g., CLAR-001)."""
-    # Try UUID first
-    try:
-        uuid_id = UUID(point_id)
-        return db.query(ClarificationPoint).filter(ClarificationPoint.id == uuid_id).first()
-    except (ValueError, AttributeError):
-        pass
-
-    # Try human-readable ID (case-insensitive)
-    return db.query(ClarificationPoint).filter(
-        ClarificationPoint.human_readable_id == point_id.upper()
-    ).first()
-
-
-# Aliases for backwards compatibility
-get_clarification_point_by_human_id = get_clarification_point
-get_clarification_point_by_any_id = get_clarification_point
-
-
-def list_clarification_points(
-    db: Session,
-    organization_id: Optional[UUID] = None,
-    project_id: Optional[UUID] = None,
-    assignee_id: Optional[UUID] = None,
-    artifact_type: Optional[str] = None,
-    artifact_id: Optional[UUID] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 50,
-) -> tuple[List[ClarificationPoint], int]:
-    """List clarification points with filtering and pagination."""
-    query = db.query(ClarificationPoint)
-
-    if organization_id:
-        query = query.filter(ClarificationPoint.organization_id == organization_id)
-    if project_id:
-        query = query.filter(ClarificationPoint.project_id == project_id)
-    if assignee_id:
-        query = query.filter(ClarificationPoint.assignee_id == assignee_id)
-    if artifact_type:
-        query = query.filter(ClarificationPoint.artifact_type == artifact_type)
-    if artifact_id:
-        query = query.filter(ClarificationPoint.artifact_id == artifact_id)
-    if status:
-        status_value = status.lower() if isinstance(status, str) else status
-        query = query.filter(ClarificationPoint.status == ClarificationStatus(status_value))
-    if priority:
-        priority_value = priority.lower() if isinstance(priority, str) else priority
-        query = query.filter(ClarificationPoint.priority == ClarificationPriority(priority_value))
-
-    # Order by priority (blocking first), then due date, then created_at
-    priority_order = [
-        ClarificationPriority.BLOCKING,
-        ClarificationPriority.HIGH,
-        ClarificationPriority.MEDIUM,
-        ClarificationPriority.LOW,
-    ]
-    query = query.order_by(
-        ClarificationPoint.status,  # pending first
-        ClarificationPoint.priority,
-        ClarificationPoint.due_date.nulls_last(),
-        ClarificationPoint.created_at.desc(),
-    )
-
-    total = query.count()
-    items = query.offset((page - 1) * page_size).limit(page_size).all()
-    return items, total
-
-
-def get_my_clarifications(
-    db: Session,
-    user_id: UUID,
-    include_resolved: bool = False,
-    page: int = 1,
-    page_size: int = 50,
-) -> tuple[List[ClarificationPoint], int]:
-    """Get clarification points assigned to a user ('What needs my input?')."""
-    query = db.query(ClarificationPoint).filter(
-        ClarificationPoint.assignee_id == user_id
-    )
-
-    if not include_resolved:
-        query = query.filter(
-            ClarificationPoint.status.in_([
-                ClarificationStatus.PENDING,
-                ClarificationStatus.IN_PROGRESS,
-            ])
-        )
-
-    query = query.order_by(
-        ClarificationPoint.priority,
-        ClarificationPoint.due_date.nulls_last(),
-        ClarificationPoint.created_at.desc(),
-    )
-
-    total = query.count()
-    items = query.offset((page - 1) * page_size).limit(page_size).all()
-    return items, total
-
-
-def update_clarification_point(
-    db: Session,
-    point_id: UUID,
-    data: ClarificationPointUpdate,
-) -> Optional[ClarificationPoint]:
-    """Update a clarification point."""
-    point = get_clarification_point(db, point_id)
-    if not point:
-        return None
-
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if field == "priority" and value:
-            value = ClarificationPriority(value.lower() if isinstance(value, str) else value)
-        elif field == "status" and value:
-            value = ClarificationStatus(value.lower() if isinstance(value, str) else value)
-        setattr(point, field, value)
-
-    point.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(point)
-    return point
-
-
-def resolve_clarification_point(
-    db: Session,
-    point_id: UUID,
-    data: ClarificationPointResolve,
-    resolved_by: UUID,
-) -> Optional[ClarificationPoint]:
-    """Resolve a clarification point with an answer.
-
-    Automatically completes the linked task in the unified task queue (RAAS-FEAT-091).
-    """
-    point = get_clarification_point(db, str(point_id))
-    if not point:
-        return None
-
-    point.resolution_content = data.resolution_content
-    point.resolved_at = datetime.now(timezone.utc)
-    point.resolved_by = resolved_by
-    point.status = ClarificationStatus.RESOLVED
-    point.updated_at = datetime.now(timezone.utc)
-
-    db.commit()
-    db.refresh(point)
-
-    # RAAS-FEAT-091: Auto-complete linked task in unified task queue
-    task_sources.complete_clarification_point_task(
-        db, point, resolved_by, data.resolution_content
-    )
-
-    return point
-
-
-def get_clarifications_for_artifact(
-    db: Session,
-    artifact_type: str,
-    artifact_id: UUID,
-    include_resolved: bool = False,
-) -> List[ClarificationPoint]:
-    """Get all clarification points for a specific artifact."""
-    query = db.query(ClarificationPoint).filter(
-        and_(
-            ClarificationPoint.artifact_type == artifact_type,
-            ClarificationPoint.artifact_id == artifact_id,
-        )
-    )
-
-    if not include_resolved:
-        query = query.filter(
-            ClarificationPoint.status != ClarificationStatus.RESOLVED
-        )
-
-    return query.order_by(ClarificationPoint.priority, ClarificationPoint.created_at).all()
+# NOTE: CR-004 removed all clarification point functions. Use task tools instead:
+# - create_clarification_point -> create_task(task_type='clarification')
+# - list_clarification_points -> list_tasks(task_type='clarification')
+# - get_clarification_point -> get_task()
+# - resolve_clarification_point -> resolve_clarification_task()
+# - get_my_clarifications -> get_my_tasks()
+# - get_clarifications_for_artifact -> list_tasks(artifact_id=..., task_type='clarification')
 
 
 # =============================================================================
@@ -402,7 +188,7 @@ def create_elicitation_session(
         target_artifact_type=data.target_artifact_type,
         target_artifact_id=data.target_artifact_id,
         assignee_id=data.assignee_id,
-        clarification_point_id=data.clarification_point_id,
+        clarification_task_id=data.clarification_task_id,
         expires_at=data.expires_at,
         created_by=created_by,
         conversation_history=[],
@@ -445,7 +231,7 @@ def list_elicitation_sessions(
     assignee_id: Optional[UUID] = None,
     status: Optional[str] = None,
     target_artifact_type: Optional[str] = None,
-    clarification_point_id: Optional[UUID] = None,
+    clarification_task_id: Optional[UUID] = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[List[ElicitationSession], int]:
@@ -463,8 +249,8 @@ def list_elicitation_sessions(
         query = query.filter(ElicitationSession.status == ElicitationSessionStatus(status_value))
     if target_artifact_type:
         query = query.filter(ElicitationSession.target_artifact_type == target_artifact_type)
-    if clarification_point_id:
-        query = query.filter(ElicitationSession.clarification_point_id == clarification_point_id)
+    if clarification_task_id:
+        query = query.filter(ElicitationSession.clarification_task_id == clarification_task_id)
 
     query = query.order_by(
         ElicitationSession.last_activity_at.desc()
@@ -475,14 +261,14 @@ def list_elicitation_sessions(
     return items, total
 
 
-def get_active_session_for_clarification(
+def get_active_session_for_clarification_task(
     db: Session,
-    clarification_point_id: UUID,
+    clarification_task_id: UUID,
 ) -> Optional[ElicitationSession]:
-    """Get active elicitation session for a clarification point."""
+    """Get active elicitation session for a clarification task."""
     return db.query(ElicitationSession).filter(
         and_(
-            ElicitationSession.clarification_point_id == clarification_point_id,
+            ElicitationSession.clarification_task_id == clarification_task_id,
             ElicitationSession.status.in_([
                 ElicitationSessionStatus.ACTIVE,
                 ElicitationSessionStatus.PAUSED,

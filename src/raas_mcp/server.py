@@ -159,14 +159,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "resolve_clarification_task": handlers.handle_resolve_clarification_task,
                 "get_my_tasks": handlers.handle_get_my_tasks,
                 # Elicitation handlers (RAAS-EPIC-026)
-                "create_clarification_point": handlers.handle_create_clarification_point,
-                "list_clarification_points": handlers.handle_list_clarification_points,
-                "get_my_clarifications": handlers.handle_get_my_clarifications,
-                "get_clarification_point": handlers.handle_get_clarification_point,
-                "resolve_clarification_point": handlers.handle_resolve_clarification_point,
-                "create_elicitation_session": handlers.handle_create_elicitation_session,
+                # NOTE: CR-004 removed clarification point handlers (use task tools)
+                # NOTE: CR-004 removed create_elicitation_session, add_session_message (internal)
                 "get_elicitation_session": handlers.handle_get_elicitation_session,
-                "add_session_message": handlers.handle_add_session_message,
                 "complete_elicitation_session": handlers.handle_complete_elicitation_session,
                 "analyze_requirement": handlers.handle_analyze_requirement,
                 "analyze_project": handlers.handle_analyze_project,

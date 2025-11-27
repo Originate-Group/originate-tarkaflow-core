@@ -1607,153 +1607,20 @@ async def handle_get_my_tasks(
 
 # =============================================================================
 # RAAS-EPIC-026: Elicitation Handlers
+# NOTE: CR-004 removed clarification point handlers (use tasks with task_type='clarification')
+# NOTE: CR-004 removed create_elicitation_session, add_session_message (internal to workflow)
 # =============================================================================
 
 
-def format_clarification(c: dict, full_details: bool = False) -> str:
-    """Format a clarification point for display.
-
-    Args:
-        c: Clarification point data dictionary
-        full_details: If True, include full description. If False, truncate.
-    """
-    lines = [
-        f"**{c['human_readable_id']}**: {c['title']}",
-        f"  Status: {c['status']} | Priority: {c['priority']}",
-        f"  Artifact: {c['artifact_type']} ({c['artifact_id'][:8]}...)",
-    ]
-    if c.get('assignee_id'):
-        lines.append(f"  Assigned to: {c['assignee_id'][:8]}...")
-    if c.get('due_date'):
-        lines.append(f"  Due: {c['due_date'][:10]}")
-    if c.get('description'):
-        if full_details:
-            lines.append(f"  Description: {c['description']}")
-        else:
-            lines.append(f"  Description: {c['description'][:100]}...")
-    return "\n".join(lines)
+# NOTE: handle_create_elicitation_session removed in CR-004 - sessions are internal to workflow
+# NOTE: handle_create_clarification_point removed in CR-004 - use create_task(task_type='clarification')
+# NOTE: handle_list_clarification_points removed in CR-004 - use list_tasks(task_type='clarification')
+# NOTE: handle_get_clarification_point removed in CR-004 - use get_task()
+# NOTE: handle_resolve_clarification_point removed in CR-004 - use resolve_clarification_task()
+# NOTE: handle_get_my_clarifications removed in CR-004 - use get_my_tasks()
 
 
-async def handle_create_clarification_point(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Create a new clarification point. DEPRECATED (CR-003): Use create_task(task_type='clarification') instead."""
-    logger.warning("DEPRECATED: create_clarification_point is deprecated (CR-003). Use create_task(task_type='clarification') instead.")
-    response = await client.post("/elicitation/clarifications", json=arguments)
-    response.raise_for_status()
-    result = response.json()
-    logger.info(f"Created clarification point {result['human_readable_id']}")
-
-    text = f"Created clarification point: {result['human_readable_id']}\n\n{format_clarification(result)}"
-    return [TextContent(type="text", text=text)], current_scope
-
-
-async def handle_list_clarification_points(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """List clarification points with filtering. DEPRECATED (CR-003): Use list_tasks(task_type='clarification') instead."""
-    logger.warning("DEPRECATED: list_clarification_points is deprecated (CR-003). Use list_tasks(task_type='clarification') instead.")
-    params = {k: v for k, v in arguments.items() if v is not None}
-    response = await client.get("/elicitation/clarifications", params=params)
-    response.raise_for_status()
-    result = response.json()
-
-    items = result.get('items', [])
-    total = result.get('total', 0)
-
-    if not items:
-        return [TextContent(type="text", text="No clarification points found matching filters.")], current_scope
-
-    text_parts = [f"Clarification Points ({total} total):\n"]
-    for c in items:
-        text_parts.append(format_clarification(c))
-        text_parts.append("")
-
-    return [TextContent(type="text", text="\n".join(text_parts))], current_scope
-
-
-async def handle_get_my_clarifications(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Get clarification points assigned to current user. DEPRECATED (CR-003): Use get_my_tasks() instead."""
-    logger.warning("DEPRECATED: get_my_clarifications is deprecated (CR-003). Use get_my_tasks() and filter by task_type='clarification' instead.")
-    params = {}
-    if arguments.get('include_resolved'):
-        params['include_resolved'] = 'true'
-
-    response = await client.get("/elicitation/clarifications/mine", params=params)
-    response.raise_for_status()
-    result = response.json()
-
-    items = result.get('items', [])
-    if not items:
-        return [TextContent(type="text", text="No clarification points need your input.")], current_scope
-
-    text_parts = ["**What Needs Your Input?**\n"]
-
-    # Group by priority
-    by_priority = {'blocking': [], 'high': [], 'medium': [], 'low': []}
-    for c in items:
-        by_priority[c['priority']].append(c)
-
-    for priority in ['blocking', 'high', 'medium', 'low']:
-        if by_priority[priority]:
-            text_parts.append(f"\n**{priority.upper()}**")
-            for c in by_priority[priority]:
-                due = f" (due: {c['due_date'][:10]})" if c.get('due_date') else ""
-                text_parts.append(f"  • {c['human_readable_id']}: {c['title']}{due}")
-
-    return [TextContent(type="text", text="\n".join(text_parts))], current_scope
-
-
-async def handle_get_clarification_point(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Get a clarification point by ID. DEPRECATED (CR-003): Use get_task() instead."""
-    logger.warning("DEPRECATED: get_clarification_point is deprecated (CR-003). Use get_task() with a clarification task ID instead.")
-    clarification_id = arguments["clarification_id"]
-    response = await client.get(f"/elicitation/clarifications/{clarification_id}")
-    response.raise_for_status()
-    result = response.json()
-
-    text = f"Clarification Point Details:\n\n{format_clarification(result, full_details=True)}"
-    if result.get('context'):
-        text += f"\n\nContext: {result['context']}"
-    if result.get('resolution_content'):
-        text += f"\n\nResolution: {result['resolution_content']}"
-
-    return [TextContent(type="text", text=text)], current_scope
-
-
-async def handle_resolve_clarification_point(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Resolve a clarification point with an answer. DEPRECATED (CR-003): Use resolve_clarification_task() instead."""
-    logger.warning("DEPRECATED: resolve_clarification_point is deprecated (CR-003). Use resolve_clarification_task() instead.")
-    clarification_id = arguments.pop("clarification_id")
-    response = await client.post(
-        f"/elicitation/clarifications/{clarification_id}/resolve",
-        json=arguments
-    )
-    response.raise_for_status()
-    result = response.json()
-    logger.info(f"Resolved clarification point {result['human_readable_id']}")
-
-    text = f"Resolved: {result['human_readable_id']}\n\nResolution: {result['resolution_content']}"
-    return [TextContent(type="text", text=text)], current_scope
-
-
-async def handle_create_elicitation_session(
+async def handle_get_elicitation_session(
     arguments: dict,
     client: httpx.AsyncClient,
     current_scope: Optional[dict] = None
@@ -1806,25 +1673,7 @@ async def handle_get_elicitation_session(
     return [TextContent(type="text", text="\n".join(text_parts))], current_scope
 
 
-async def handle_add_session_message(
-    arguments: dict,
-    client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
-) -> tuple[list[TextContent], Optional[dict]]:
-    """Add a message to elicitation session conversation."""
-    session_id = arguments.pop("session_id")
-    response = await client.post(
-        f"/elicitation/sessions/{session_id}/messages",
-        json=arguments
-    )
-    response.raise_for_status()
-    result = response.json()
-
-    text = (
-        f"Message added to session {result['human_readable_id']}\n"
-        f"Total messages: {len(result.get('conversation_history', []))}"
-    )
-    return [TextContent(type="text", text=text)], current_scope
+# NOTE: handle_add_session_message removed in CR-004 - sessions are internal to workflow
 
 
 async def handle_complete_elicitation_session(

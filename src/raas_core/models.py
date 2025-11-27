@@ -1023,83 +1023,10 @@ class TaskEscalation(Base):
 # RAAS-EPIC-026: AI-Driven Requirements Elicitation & Verification
 # =============================================================================
 
-class ClarificationPriority(str, enum.Enum):
-    """Priority levels for clarification points."""
-    BLOCKING = "blocking"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-class ClarificationStatus(str, enum.Enum):
-    """Status of a clarification point."""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    RESOLVED = "resolved"
-    DEFERRED = "deferred"
-
-
-class ClarificationPoint(Base):
-    """
-    Clarification Point for tracking questions/gaps requiring stakeholder input.
-    RAAS-COMP-060: Clarification Points Management
-    """
-    __tablename__ = "clarification_points"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    human_readable_id = Column(String(20), unique=True, nullable=True)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
-                             nullable=False, index=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
-                        nullable=True, index=True)
-
-    # Link to source artifact
-    artifact_type = Column(String(50), nullable=False)  # requirement, guardrail, etc.
-    artifact_id = Column(UUID(as_uuid=True), nullable=False)
-
-    # Clarification details
-    title = Column(String(200), nullable=False)
-    description = Column(Text, nullable=True)
-    context = Column(Text, nullable=True)  # Why this clarification is needed
-
-    # Priority and status - use values_callable to serialize as lowercase
-    priority = Column(
-        Enum(ClarificationPriority, name="clarificationpriority", create_type=False,
-             values_callable=lambda obj: [e.value for e in obj]),
-        nullable=False, default=ClarificationPriority.MEDIUM
-    )
-    status = Column(
-        Enum(ClarificationStatus, name="clarificationstatus", create_type=False,
-             values_callable=lambda obj: [e.value for e in obj]),
-        nullable=False, default=ClarificationStatus.PENDING
-    )
-
-    # Assignment
-    assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
-                         nullable=True, index=True)
-    due_date = Column(DateTime(timezone=True), nullable=True)
-
-    # Resolution
-    resolution_content = Column(Text, nullable=True)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
-                         nullable=True)
-
-    # Audit
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
-                        nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
-
-    # Relationships
-    organization = relationship("Organization")
-    project = relationship("Project")
-    assignee = relationship("User", foreign_keys=[assignee_id])
-    resolver = relationship("User", foreign_keys=[resolved_by])
-    creator = relationship("User", foreign_keys=[created_by])
-
-    def __repr__(self) -> str:
-        return f"<ClarificationPoint {self.human_readable_id}: {self.title}>"
+# NOTE: ClarificationPoint, ClarificationPriority, ClarificationStatus were removed in CR-004.
+# Clarifications are now managed as tasks with task_type='clarification'.
+# See Task model for clarification-specific fields: context, artifact_type, artifact_id,
+# resolution_content, resolved_at, resolved_by.
 
 
 class QuestionFramework(Base):
@@ -1191,10 +1118,10 @@ class ElicitationSession(Base):
     identified_gaps = Column(JSONB, nullable=False, default=list)
     progress = Column(JSONB, nullable=False, default=dict)
 
-    # Link to clarification point being resolved
-    clarification_point_id = Column(UUID(as_uuid=True),
-                                    ForeignKey("clarification_points.id", ondelete="SET NULL"),
-                                    nullable=True)
+    # Link to clarification task being resolved (CR-004: uses tasks instead of clarification_points)
+    clarification_task_id = Column(UUID(as_uuid=True),
+                                   ForeignKey("tasks.id", ondelete="SET NULL"),
+                                   nullable=True)
 
     # Timestamps
     started_at = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
@@ -1211,7 +1138,7 @@ class ElicitationSession(Base):
     project = relationship("Project")
     assignee = relationship("User", foreign_keys=[assignee_id])
     creator = relationship("User", foreign_keys=[created_by])
-    clarification_point = relationship("ClarificationPoint")
+    clarification_task = relationship("Task", foreign_keys=[clarification_task_id])
 
     def __repr__(self) -> str:
         return f"<ElicitationSession {self.human_readable_id}: {self.target_artifact_type}>"

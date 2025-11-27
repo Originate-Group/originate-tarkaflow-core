@@ -1700,131 +1700,16 @@ def get_tools() -> list[Tool]:
         # RAAS-EPIC-026: Elicitation Tools
         # =====================================================================
 
-        # Clarification Points (RAAS-COMP-060) - DEPRECATED (CR-003)
-        # These tools are deprecated. Use create_task(task_type='clarification') instead.
-        Tool(
-            name="create_clarification_point",
-            description="**DEPRECATED (CR-003)**: Use create_task(task_type='clarification') instead. "
-                       "\n\nThis tool will continue to work but is deprecated. Clarification points have been "
-                       "consolidated into the unified task queue."
-                       "\n\n---\n\n"
-                       "Create a clarification point to track a question or gap needing stakeholder input. "
-                       "\n\nClarification points are linked to artifacts (requirements, guardrails) and can be "
-                       "assigned to users for resolution. Use this to capture ambiguities, missing information, "
-                       "or questions that need business stakeholder answers."
-                       "\n\nPRIORITY LEVELS:"
-                       "\n• blocking: Blocks progress, needs immediate resolution"
-                       "\n• high: Important, resolve soon"
-                       "\n• medium: Normal priority (default)"
-                       "\n• low: Nice to have clarification",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {"type": "string", "description": "Organization UUID"},
-                    "project_id": {"type": "string", "description": "Optional project UUID"},
-                    "artifact_type": {"type": "string", "description": "Type of artifact (requirement, guardrail)"},
-                    "artifact_id": {"type": "string", "description": "UUID of the artifact needing clarification"},
-                    "title": {"type": "string", "description": "Brief title of the clarification needed"},
-                    "description": {"type": "string", "description": "Detailed description of what needs clarification"},
-                    "context": {"type": "string", "description": "Why this clarification is needed"},
-                    "priority": {"type": "string", "enum": ["blocking", "high", "medium", "low"], "description": "Priority level (default: medium)"},
-                    "assignee_id": {"type": "string", "description": "UUID of user to assign"},
-                    "due_date": {"type": "string", "description": "ISO datetime for due date"}
-                },
-                "required": ["organization_id", "artifact_type", "artifact_id", "title"]
-            }
-        ),
-        Tool(
-            name="list_clarification_points",
-            description="**DEPRECATED (CR-003)**: Use list_tasks(task_type='clarification') instead. "
-                       "\n\nThis tool will continue to work but is deprecated."
-                       "\n\n---\n\n"
-                       "List clarification points with filtering. "
-                       "\n\nUse this to find clarification points by status, assignee, artifact, or priority.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {"type": "string", "description": "Filter by organization"},
-                    "project_id": {"type": "string", "description": "Filter by project"},
-                    "assignee_id": {"type": "string", "description": "Filter by assignee"},
-                    "artifact_type": {"type": "string", "description": "Filter by artifact type"},
-                    "artifact_id": {"type": "string", "description": "Filter by artifact ID"},
-                    "status": {"type": "string", "enum": ["pending", "in_progress", "resolved", "deferred"]},
-                    "priority": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
-                    "page": {"type": "integer", "description": "Page number (default: 1)"},
-                    "page_size": {"type": "integer", "description": "Items per page (default: 50)"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="get_my_clarifications",
-            description="**DEPRECATED (CR-003)**: Use get_my_tasks() and filter by task_type='clarification' instead. "
-                       "\n\nThis tool will continue to work but is deprecated."
-                       "\n\n---\n\n"
-                       "Get clarification points assigned to YOU ('What needs my input?'). "
-                       "\n\nThis is the primary tool for business stakeholders to see what questions need their answers. "
-                       "Returns clarifications sorted by priority (blocking first) and due date."
-                       "\n\nBy default excludes resolved clarifications.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_resolved": {"type": "boolean", "description": "Include resolved clarifications (default: false)"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="get_clarification_point",
-            description="**DEPRECATED (CR-003)**: Use get_task() with a clarification task ID instead. "
-                       "\n\nThis tool will continue to work but is deprecated."
-                       "\n\n---\n\n"
-                       "Get details of a specific clarification point. "
-                       "\n\nAccepts both UUID and human-readable ID (e.g., 'CLAR-001').",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "clarification_id": {"type": "string", "description": "UUID or human-readable ID"}
-                },
-                "required": ["clarification_id"]
-            }
-        ),
-        Tool(
-            name="resolve_clarification_point",
-            description="**DEPRECATED (CR-003)**: Use resolve_clarification_task() instead. "
-                       "\n\nThis tool will continue to work but is deprecated."
-                       "\n\n---\n\n"
-                       "Resolve a clarification point with an answer. "
-                       "\n\nMarks the clarification as resolved and records the resolution content.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "clarification_id": {"type": "string", "description": "UUID or human-readable ID"},
-                    "resolution_content": {"type": "string", "description": "The answer/resolution to the clarification"}
-                },
-                "required": ["clarification_id", "resolution_content"]
-            }
-        ),
+        # NOTE: CR-004 removed clarification point tools (use tasks with task_type='clarification'):
+        # - create_clarification_point -> create_task(task_type='clarification')
+        # - list_clarification_points -> list_tasks(task_type='clarification')
+        # - get_clarification_point -> get_task()
+        # - resolve_clarification_point -> resolve_clarification_task()
+        # - get_my_clarifications -> get_my_tasks()
+        #
+        # NOTE: CR-004 removed create_elicitation_session, add_session_message (internal to workflow)
 
-        # Elicitation Sessions (RAAS-COMP-063)
-        Tool(
-            name="create_elicitation_session",
-            description="Create a new elicitation session for guided requirements discovery. "
-                       "\n\nSessions persist conversation history and can be paused/resumed. "
-                       "Use this when starting a Socratic questioning session with a stakeholder.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {"type": "string", "description": "Organization UUID"},
-                    "project_id": {"type": "string", "description": "Optional project UUID"},
-                    "target_artifact_type": {"type": "string", "description": "Type to create (epic, component, feature, requirement, guardrail)"},
-                    "target_artifact_id": {"type": "string", "description": "UUID or human-readable ID (e.g., RAAS-FEAT-042) if refining existing artifact (optional)"},
-                    "assignee_id": {"type": "string", "description": "UUID of stakeholder"},
-                    "clarification_point_id": {"type": "string", "description": "UUID or human-readable ID (e.g., CLAR-001) if resolving a clarification point"}
-                },
-                "required": ["organization_id", "target_artifact_type"]
-            }
-        ),
+        # Elicitation Sessions (RAAS-COMP-063) - get_elicitation_session kept for viewing history
         Tool(
             name="get_elicitation_session",
             description="Get an elicitation session with full conversation history. "
@@ -1837,21 +1722,7 @@ def get_tools() -> list[Tool]:
                 "required": ["session_id"]
             }
         ),
-        Tool(
-            name="add_session_message",
-            description="Add a message to an elicitation session's conversation history. "
-                       "\n\nUse this to record each exchange in the Socratic dialogue.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string", "description": "Session UUID or human-readable ID (e.g., 'ELIC-001')"},
-                    "role": {"type": "string", "enum": ["user", "assistant", "system"], "description": "Message role"},
-                    "content": {"type": "string", "description": "Message content"},
-                    "metadata": {"type": "object", "description": "Optional metadata"}
-                },
-                "required": ["session_id", "role", "content"]
-            }
-        ),
+        # NOTE: add_session_message removed in CR-004 - sessions are internal to workflow
         Tool(
             name="complete_elicitation_session",
             description="Mark an elicitation session as completed. "

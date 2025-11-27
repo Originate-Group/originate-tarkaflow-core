@@ -873,72 +873,9 @@ class TaskEscalationResponse(BaseModel):
 # =============================================================================
 
 
-class ClarificationPointCreate(BaseModel):
-    """Schema for creating a clarification point."""
-
-    organization_id: UUID
-    project_id: Optional[UUID] = None
-    artifact_type: str  # requirement, guardrail, etc.
-    artifact_id: UUID
-    title: str
-    description: Optional[str] = None
-    context: Optional[str] = None
-    priority: str = "medium"  # blocking, high, medium, low
-    assignee_id: Optional[UUID] = None
-    due_date: Optional[datetime] = None
-
-
-class ClarificationPointUpdate(BaseModel):
-    """Schema for updating a clarification point."""
-
-    title: Optional[str] = None
-    description: Optional[str] = None
-    context: Optional[str] = None
-    priority: Optional[str] = None
-    status: Optional[str] = None
-    assignee_id: Optional[UUID] = None
-    due_date: Optional[datetime] = None
-
-
-class ClarificationPointResolve(BaseModel):
-    """Schema for resolving a clarification point."""
-
-    resolution_content: str
-
-
-class ClarificationPointResponse(BaseModel):
-    """Schema for clarification point response."""
-
-    id: UUID
-    human_readable_id: Optional[str] = None
-    organization_id: UUID
-    project_id: Optional[UUID] = None
-    artifact_type: str
-    artifact_id: UUID
-    title: str
-    description: Optional[str] = None
-    context: Optional[str] = None
-    priority: str
-    status: str
-    assignee_id: Optional[UUID] = None
-    due_date: Optional[datetime] = None
-    resolution_content: Optional[str] = None
-    resolved_at: Optional[datetime] = None
-    resolved_by: Optional[UUID] = None
-    created_by: Optional[UUID] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
-
-
-class ClarificationPointListResponse(BaseModel):
-    """Schema for paginated clarification point list."""
-
-    items: List[ClarificationPointResponse]
-    total: int
-    page: int
-    page_size: int
+# NOTE: ClarificationPoint schemas removed by CR-004
+# Clarifications are now handled as tasks with task_type='clarification'
+# Use TaskCreate with task_type='clarification' instead
 
 
 class QuestionFrameworkCreate(BaseModel):
@@ -997,7 +934,7 @@ class ElicitationSessionCreate(BaseModel):
     target_artifact_type: str  # epic, component, feature, requirement, guardrail
     target_artifact_id: Optional[str] = None  # UUID or human-readable ID, NULL if creating new
     assignee_id: Optional[UUID] = None
-    clarification_point_id: Optional[str] = None  # UUID or human-readable ID (e.g., CLAR-001)
+    clarification_task_id: Optional[str] = None  # UUID or human-readable ID (e.g., TASK-001) - CR-004: uses tasks
     expires_at: Optional[datetime] = None
 
 
@@ -1026,7 +963,7 @@ class ElicitationSessionResponse(BaseModel):
     Includes enriched context for session resumption (RAAS-FEAT-090):
     - Target artifact human-readable ID for context restoration
     - Assignee details (email, name) for display
-    - Clarification point human-readable ID for linking
+    - Clarification task human-readable ID for linking (CR-004: uses tasks)
     """
 
     id: UUID
@@ -1044,8 +981,8 @@ class ElicitationSessionResponse(BaseModel):
     partial_draft: Optional[dict] = None
     identified_gaps: List[dict]
     progress: dict
-    clarification_point_id: Optional[UUID] = None
-    clarification_point_human_readable_id: Optional[str] = None  # e.g., CLAR-001
+    clarification_task_id: Optional[UUID] = None  # CR-004: uses tasks instead of clarification_points
+    clarification_task_human_readable_id: Optional[str] = None  # e.g., TASK-001
     started_at: datetime
     last_activity_at: datetime
     completed_at: Optional[datetime] = None
@@ -1059,6 +996,7 @@ class ElicitationSessionListItem(BaseModel):
     """Schema for elicitation session list item (lightweight).
 
     Includes enriched context fields (RAAS-FEAT-090) for quick scanning.
+    CR-004: Uses clarification_task_id instead of clarification_point_id.
     """
 
     id: UUID
@@ -1072,8 +1010,8 @@ class ElicitationSessionListItem(BaseModel):
     assignee_email: Optional[str] = None
     assignee_name: Optional[str] = None
     status: str
-    clarification_point_id: Optional[UUID] = None
-    clarification_point_human_readable_id: Optional[str] = None  # e.g., CLAR-001
+    clarification_task_id: Optional[UUID] = None  # CR-004: uses tasks
+    clarification_task_human_readable_id: Optional[str] = None  # e.g., TASK-001
     started_at: datetime
     last_activity_at: datetime
     message_count: int = 0
