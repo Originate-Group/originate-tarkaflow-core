@@ -542,19 +542,22 @@ async def handle_select_agent(
     client: httpx.AsyncClient,
     current_scope: Optional[dict] = None
 ) -> tuple[list[TextContent], Optional[dict]]:
-    """Handle select_agent tool call (CR-009).
+    """Handle select_agent tool call (CR-009, CR-012).
+
+    CR-012 adds authorization checking: directors must be explicitly authorized
+    to use agents, or be organization owners (implicit authorization).
 
     Args:
-        arguments: Tool arguments containing agent_email
-        client: HTTP client (not used for this operation)
-        current_scope: Current project scope (passed through unchanged)
+        arguments: Tool arguments containing agent_email and optional organization_id
+        client: HTTP client for API calls
+        current_scope: Current project scope (used to get organization_id if not provided)
 
     Returns:
         Tuple of (response content, agent scope marker)
     """
     agent_email = arguments["agent_email"].lower()
 
-    # Validate agent email
+    # Validate agent email format
     if agent_email not in VALID_AGENT_EMAILS:
         valid_list = ", ".join(sorted(VALID_AGENT_EMAILS))
         return [TextContent(
@@ -562,13 +565,65 @@ async def handle_select_agent(
             text=f"Invalid agent: {agent_email}\n\nValid agents: {valid_list}"
         )], current_scope
 
+    # Get organization_id from arguments or current scope
+    organization_id = arguments.get("organization_id")
+    if not organization_id and current_scope and "organization_id" in current_scope:
+        organization_id = current_scope["organization_id"]
+
+    # CR-012: Check authorization if we have an organization context
+    auth_type = None
+    if organization_id:
+        try:
+            response = await client.get(
+                "/agents/check-authorization",
+                params={
+                    "agent_email": agent_email,
+                    "organization_id": str(organization_id),
+                }
+            )
+            if response.status_code == 403:
+                error_data = response.json().get("detail", {})
+                error_msg = error_data.get("message", "Not authorized to use this agent")
+                return [TextContent(
+                    type="text",
+                    text=f"Authorization denied: {error_msg}\n\n"
+                         f"You are not authorized to act as '{agent_email}' in this organization.\n"
+                         f"Contact an organization owner to create an agent-director mapping.\n\n"
+                         f"Use list_my_agents() to see which agents you can use."
+                )], current_scope
+            elif response.status_code == 404:
+                return [TextContent(
+                    type="text",
+                    text=f"Agent not found: {agent_email}\n\n"
+                         f"Use list_my_agents() to see available agents."
+                )], current_scope
+            elif response.status_code == 200:
+                result = response.json()
+                auth_type = result.get("authorization_type")
+            else:
+                # For other errors, log but continue (graceful degradation)
+                logger.warning(f"Authorization check failed with status {response.status_code}, proceeding anyway")
+        except Exception as e:
+            # Log error but don't block - graceful degradation for backward compatibility
+            logger.warning(f"Authorization check failed: {e}, proceeding anyway")
+
     role = AGENT_ROLE_MAP.get(agent_email, "unknown")
-    logger.info(f"Set agent to: {agent_email} (role: {role})")
+    logger.info(f"Set agent to: {agent_email} (role: {role}, auth_type: {auth_type})")
+
+    # Build response message
+    auth_info = ""
+    if auth_type == "owner":
+        auth_info = "\nAuthorization: implicit (you are an organization owner)"
+    elif auth_type == "explicit":
+        auth_info = "\nAuthorization: explicit (agent-director mapping exists)"
+    elif not organization_id:
+        auth_info = "\n\nNote: No organization context set. Use select_project() to set context " \
+                   "for proper authorization enforcement."
 
     content = [TextContent(
         type="text",
         text=f"Agent set to: {agent_email}\n"
-             f"Role: {role}\n\n"
+             f"Role: {role}{auth_info}\n\n"
              f"All status transitions will now use this agent for authorization.\n"
              f"Audit trail will show: director=<your user>, actor={agent_email}"
     )]
@@ -625,6 +680,88 @@ async def handle_clear_agent(
 
     # Return special marker to clear both agent and persona (for backward compat)
     return content, {"_agent": None, "_persona": None}
+
+
+async def handle_list_my_agents(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Handle list_my_agents tool call (CR-012).
+
+    Returns agents the current user can direct in the organization.
+
+    Args:
+        arguments: Tool arguments containing organization_id (optional if project scope set)
+        client: HTTP client for API calls
+        current_scope: Current project scope (used to get organization_id if not provided)
+
+    Returns:
+        Tuple of (response content, scope unchanged)
+    """
+    # Get organization_id from arguments or current scope
+    organization_id = arguments.get("organization_id")
+    if not organization_id and current_scope and "organization_id" in current_scope:
+        organization_id = current_scope["organization_id"]
+
+    if not organization_id:
+        return [TextContent(
+            type="text",
+            text="Organization ID required.\n\n"
+                 "Either provide organization_id parameter or use select_project() first "
+                 "to set the organization context."
+        )], current_scope
+
+    try:
+        response = await client.get(
+            "/agents/my-agents",
+            params={"organization_id": str(organization_id)}
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Format the agent list
+        agents = data.get("agents", [])
+        authorized_agents = [a for a in agents if a.get("is_authorized")]
+        unauthorized_agents = [a for a in agents if not a.get("is_authorized")]
+
+        lines = ["# Agents You Can Direct\n"]
+
+        if authorized_agents:
+            lines.append("## Authorized Agents\n")
+            for agent in authorized_agents:
+                auth_type = agent.get("authorization_type", "unknown")
+                name = agent.get("full_name") or "No name"
+                lines.append(f"• **{agent['email']}** ({name})")
+                lines.append(f"  - Authorization: {auth_type}")
+            lines.append("")
+
+        if unauthorized_agents:
+            lines.append("## Unavailable Agents (not authorized)\n")
+            for agent in unauthorized_agents:
+                name = agent.get("full_name") or "No name"
+                lines.append(f"• {agent['email']} ({name})")
+            lines.append("")
+            lines.append("To use these agents, contact an organization owner to create an agent-director mapping.")
+
+        lines.append(f"\nDirector: {data.get('director_email', 'unknown')}")
+        lines.append(f"Organization: {organization_id}")
+
+        return [TextContent(type="text", text="\n".join(lines))], current_scope
+
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            return [TextContent(
+                type="text",
+                text="Access denied: You are not a member of this organization."
+            )], current_scope
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list agents: {e}")
+        return [TextContent(
+            type="text",
+            text=f"Failed to list agents: {str(e)}"
+        )], current_scope
 
 
 async def apply_agent_defaults(

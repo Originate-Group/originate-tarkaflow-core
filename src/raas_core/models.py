@@ -1132,6 +1132,63 @@ class ElicitationSessionStatus(str, enum.Enum):
     ARCHIVED = "archived"
 
 
+class AgentDirector(Base):
+    """
+    Agent-Director authorization mapping (CR-012).
+
+    Controls which humans (directors) can act as which agents (actors).
+    Organization owners have implicit authorization for all agents in their org.
+    Other users require explicit mappings in this table.
+    """
+
+    __tablename__ = "agent_directors"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    # Agent account (user_type='agent')
+    agent_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    # Human director authorized to use this agent
+    director_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    # Organization scope
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    # Audit fields
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # Relationships
+    agent = relationship("User", foreign_keys=[agent_id])
+    director = relationship("User", foreign_keys=[director_id])
+    organization = relationship("Organization")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("agent_id", "director_id", "organization_id",
+                        name="uq_agent_director_org"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AgentDirector agent={self.agent_id} director={self.director_id}>"
+
+
 class ElicitationSession(Base):
     """
     Elicitation Session for managing multi-session conversations.

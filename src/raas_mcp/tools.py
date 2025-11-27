@@ -644,6 +644,35 @@ def get_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
+        Tool(
+            name="list_my_agents",
+            description="List agents you are authorized to direct in an organization (CR-012). "
+                       "\n\nReturns all agent accounts with authorization status indicating which ones "
+                       "you can use with select_agent()."
+                       "\n\nAUTHORIZATION TYPES:"
+                       "\n• 'owner': You are an organization owner (implicit authorization for all agents)"
+                       "\n• 'explicit': An agent-director mapping exists for you"
+                       "\n• None: Not authorized (cannot use this agent)"
+                       "\n\nWHEN TO USE:"
+                       "\n• Before calling select_agent() to see available options"
+                       "\n• When select_agent() returns 'not authorized' error"
+                       "\n• To verify which agents you have access to"
+                       "\n\nPARAMETERS:"
+                       "\n• organization_id: Optional if select_project() was called (uses project's org)"
+                       "\n\nRETURNS: List of agents with authorization status"
+                       "\n\nRELATED TOOLS:"
+                       "\n• select_agent() to set the active agent"
+                       "\n• select_project() to set organization context",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {
+                        "type": "string",
+                        "description": "Organization UUID (optional if project scope is set)"
+                    }
+                }
+            }
+        ),
         # ============================================================================
         # Requirement Tools
         # ============================================================================

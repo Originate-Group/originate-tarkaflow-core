@@ -3268,3 +3268,359 @@ def get_tasks_by_source_id(
         )
 
     return query.order_by(models.Task.created_at.desc()).all()
+
+
+# ============================================================================
+# Agent Director Functions (CR-012)
+# ============================================================================
+
+
+def get_user_org_role(
+    db: Session,
+    user_id: UUID,
+    organization_id: UUID,
+) -> Optional[models.MemberRole]:
+    """
+    Get user's role in an organization.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        organization_id: Organization UUID
+
+    Returns:
+        MemberRole enum or None if not a member
+    """
+    membership = (
+        db.query(models.OrganizationMember)
+        .filter(
+            models.OrganizationMember.user_id == user_id,
+            models.OrganizationMember.organization_id == organization_id,
+        )
+        .first()
+    )
+    return membership.role if membership else None
+
+
+def is_org_owner(
+    db: Session,
+    user_id: UUID,
+    organization_id: UUID,
+) -> bool:
+    """
+    Check if user is an owner of the organization.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        organization_id: Organization UUID
+
+    Returns:
+        True if user is an owner, False otherwise
+    """
+    role = get_user_org_role(db, user_id, organization_id)
+    return role == models.MemberRole.OWNER
+
+
+def get_agent_by_email(
+    db: Session,
+    email: str,
+) -> Optional[models.User]:
+    """
+    Get an agent account by email.
+
+    Args:
+        db: Database session
+        email: Agent email address
+
+    Returns:
+        User model if found and is an agent, None otherwise
+    """
+    user = (
+        db.query(models.User)
+        .filter(
+            models.User.email == email.lower(),
+            models.User.user_type == models.UserType.AGENT,
+        )
+        .first()
+    )
+    return user
+
+
+def list_agents(
+    db: Session,
+    organization_id: Optional[UUID] = None,
+) -> list[models.User]:
+    """
+    List all agent accounts.
+
+    Args:
+        db: Database session
+        organization_id: Optional - not currently used but reserved for future org-scoped agents
+
+    Returns:
+        List of agent User models
+    """
+    query = db.query(models.User).filter(
+        models.User.user_type == models.UserType.AGENT,
+        models.User.is_active == True,
+    )
+    return query.order_by(models.User.email).all()
+
+
+def check_agent_director_authorization(
+    db: Session,
+    director_id: UUID,
+    agent_email: str,
+    organization_id: UUID,
+) -> tuple[bool, str]:
+    """
+    Check if a director is authorized to act as an agent in an organization.
+
+    Authorization is granted if:
+    1. Director is an owner of the organization (implicit authorization), OR
+    2. An explicit AgentDirector mapping exists
+
+    Args:
+        db: Database session
+        director_id: UUID of the human user (director)
+        agent_email: Email of the agent account
+        organization_id: UUID of the organization
+
+    Returns:
+        Tuple of (is_authorized, authorization_type)
+        - is_authorized: True if authorized, False otherwise
+        - authorization_type: 'owner' (implicit), 'explicit' (mapping exists), or None
+    """
+    # First, get the agent by email
+    agent = get_agent_by_email(db, agent_email)
+    if not agent:
+        return False, None
+
+    # Check if director is an org owner (implicit authorization)
+    if is_org_owner(db, director_id, organization_id):
+        return True, "owner"
+
+    # Check for explicit mapping
+    mapping = (
+        db.query(models.AgentDirector)
+        .filter(
+            models.AgentDirector.agent_id == agent.id,
+            models.AgentDirector.director_id == director_id,
+            models.AgentDirector.organization_id == organization_id,
+        )
+        .first()
+    )
+
+    if mapping:
+        return True, "explicit"
+
+    return False, None
+
+
+def get_agents_for_director(
+    db: Session,
+    director_id: UUID,
+    organization_id: UUID,
+) -> list[dict]:
+    """
+    Get all agents a director can use in an organization.
+
+    For org owners: returns all agents with authorization_type='owner'
+    For others: returns only explicitly mapped agents
+
+    Args:
+        db: Database session
+        director_id: UUID of the human user
+        organization_id: UUID of the organization
+
+    Returns:
+        List of agent dicts with authorization info
+    """
+    all_agents = list_agents(db)
+
+    # Check if director is org owner
+    director_is_owner = is_org_owner(db, director_id, organization_id)
+
+    # Get explicit mappings for this director in this org
+    explicit_mappings = (
+        db.query(models.AgentDirector.agent_id)
+        .filter(
+            models.AgentDirector.director_id == director_id,
+            models.AgentDirector.organization_id == organization_id,
+        )
+        .all()
+    )
+    explicit_agent_ids = {m.agent_id for m in explicit_mappings}
+
+    result = []
+    for agent in all_agents:
+        if director_is_owner:
+            # Owners can use all agents
+            result.append({
+                "id": agent.id,
+                "email": agent.email,
+                "full_name": agent.full_name,
+                "is_authorized": True,
+                "authorization_type": "owner",
+            })
+        elif agent.id in explicit_agent_ids:
+            # Explicit mapping exists
+            result.append({
+                "id": agent.id,
+                "email": agent.email,
+                "full_name": agent.full_name,
+                "is_authorized": True,
+                "authorization_type": "explicit",
+            })
+        else:
+            # Not authorized
+            result.append({
+                "id": agent.id,
+                "email": agent.email,
+                "full_name": agent.full_name,
+                "is_authorized": False,
+                "authorization_type": None,
+            })
+
+    return result
+
+
+def create_agent_director_mapping(
+    db: Session,
+    agent_id: UUID,
+    director_id: UUID,
+    organization_id: UUID,
+    created_by: Optional[UUID] = None,
+) -> models.AgentDirector:
+    """
+    Create an agent-director authorization mapping.
+
+    Args:
+        db: Database session
+        agent_id: UUID of the agent account
+        director_id: UUID of the human user to authorize
+        organization_id: UUID of the organization
+        created_by: UUID of the user creating the mapping
+
+    Returns:
+        Created AgentDirector model
+
+    Raises:
+        ValueError: If mapping already exists or invalid user types
+    """
+    # Verify agent exists and is an agent
+    agent = db.query(models.User).filter(models.User.id == agent_id).first()
+    if not agent:
+        raise ValueError(f"Agent not found: {agent_id}")
+    if agent.user_type != models.UserType.AGENT:
+        raise ValueError(f"User {agent_id} is not an agent account")
+
+    # Verify director exists and is a human
+    director = db.query(models.User).filter(models.User.id == director_id).first()
+    if not director:
+        raise ValueError(f"Director not found: {director_id}")
+    if director.user_type != models.UserType.HUMAN:
+        raise ValueError(f"User {director_id} is not a human account")
+
+    # Verify organization exists
+    org = db.query(models.Organization).filter(models.Organization.id == organization_id).first()
+    if not org:
+        raise ValueError(f"Organization not found: {organization_id}")
+
+    # Check for existing mapping
+    existing = (
+        db.query(models.AgentDirector)
+        .filter(
+            models.AgentDirector.agent_id == agent_id,
+            models.AgentDirector.director_id == director_id,
+            models.AgentDirector.organization_id == organization_id,
+        )
+        .first()
+    )
+    if existing:
+        raise ValueError("Agent-director mapping already exists")
+
+    # Create mapping
+    mapping = models.AgentDirector(
+        agent_id=agent_id,
+        director_id=director_id,
+        organization_id=organization_id,
+        created_by=created_by,
+    )
+
+    db.add(mapping)
+    db.commit()
+    db.refresh(mapping)
+
+    logger.info(f"Created agent-director mapping: agent={agent.email}, director={director.email}, org={org.slug}")
+    return mapping
+
+
+def delete_agent_director_mapping(
+    db: Session,
+    agent_id: UUID,
+    director_id: UUID,
+    organization_id: UUID,
+) -> bool:
+    """
+    Delete an agent-director authorization mapping.
+
+    Args:
+        db: Database session
+        agent_id: UUID of the agent account
+        director_id: UUID of the human user
+        organization_id: UUID of the organization
+
+    Returns:
+        True if mapping was deleted, False if not found
+    """
+    mapping = (
+        db.query(models.AgentDirector)
+        .filter(
+            models.AgentDirector.agent_id == agent_id,
+            models.AgentDirector.director_id == director_id,
+            models.AgentDirector.organization_id == organization_id,
+        )
+        .first()
+    )
+
+    if not mapping:
+        return False
+
+    db.delete(mapping)
+    db.commit()
+
+    logger.info(f"Deleted agent-director mapping: agent={agent_id}, director={director_id}, org={organization_id}")
+    return True
+
+
+def list_agent_director_mappings(
+    db: Session,
+    organization_id: UUID,
+    agent_id: Optional[UUID] = None,
+    director_id: Optional[UUID] = None,
+) -> list[models.AgentDirector]:
+    """
+    List agent-director mappings for an organization.
+
+    Args:
+        db: Database session
+        organization_id: UUID of the organization
+        agent_id: Optional filter by agent
+        director_id: Optional filter by director
+
+    Returns:
+        List of AgentDirector models
+    """
+    query = db.query(models.AgentDirector).filter(
+        models.AgentDirector.organization_id == organization_id
+    )
+
+    if agent_id:
+        query = query.filter(models.AgentDirector.agent_id == agent_id)
+
+    if director_id:
+        query = query.filter(models.AgentDirector.director_id == director_id)
+
+    return query.order_by(models.AgentDirector.created_at.desc()).all()

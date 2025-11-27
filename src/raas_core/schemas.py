@@ -403,6 +403,56 @@ class UserListResponse(BaseModel):
 
 
 # ============================================================================
+# Agent Director Schemas (CR-012)
+# ============================================================================
+
+class AgentDirectorCreate(BaseModel):
+    """Schema for creating an agent-director mapping."""
+
+    agent_id: UUID = Field(..., description="UUID of the agent account")
+    director_id: UUID = Field(..., description="UUID of the human user authorized to direct this agent")
+    organization_id: UUID = Field(..., description="Organization UUID")
+
+
+class AgentDirectorResponse(BaseModel):
+    """Schema for agent-director mapping response."""
+
+    id: UUID
+    agent_id: UUID
+    agent_email: str
+    agent_name: Optional[str] = None
+    director_id: UUID
+    director_email: str
+    director_name: Optional[str] = None
+    organization_id: UUID
+    created_at: datetime
+    created_by_email: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentResponse(BaseModel):
+    """Schema for agent account response (with authorization info)."""
+
+    id: UUID
+    email: str
+    full_name: Optional[str] = None
+    is_authorized: bool = Field(description="Whether current user is authorized to direct this agent")
+    authorization_type: Optional[str] = Field(None, description="'explicit' (mapping exists) or 'owner' (org owner implicit)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MyAgentsResponse(BaseModel):
+    """Schema for list of agents the current user can direct."""
+
+    agents: list[AgentResponse]
+    organization_id: UUID
+    director_id: UUID
+    director_email: str
+
+
+# ============================================================================
 # Guardrail Schemas
 # ============================================================================
 

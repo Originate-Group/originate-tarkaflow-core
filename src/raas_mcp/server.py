@@ -119,10 +119,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "select_project": handlers.handle_select_project,
                 "get_project_scope": handlers.handle_get_project_scope,
                 "clear_project_scope": handlers.handle_clear_project_scope,
-                # Agent scope handlers (CR-009: replaces persona)
+                # Agent scope handlers (CR-009: replaces persona, CR-012: adds authorization)
                 "select_agent": handlers.handle_select_agent,
                 "get_agent": handlers.handle_get_agent,
                 "clear_agent": handlers.handle_clear_agent,
+                "list_my_agents": handlers.handle_list_my_agents,
                 # User handlers
                 "list_users": handlers.handle_list_users,
                 "search_users": handlers.handle_search_users,
