@@ -1791,6 +1791,20 @@ def get_tools() -> list[Tool]:
                 "required": ["session_id", "role", "content"]
             }
         ),
+        Tool(
+            name="complete_elicitation_session",
+            description="Mark an elicitation session as completed. "
+                       "\n\nUse this when the Socratic dialogue has concluded and the session's goals have been met. "
+                       "Optionally link the session to a final artifact (requirement, guardrail) that was created or refined.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session UUID or human-readable ID (e.g., 'ELIC-001')"},
+                    "final_artifact_id": {"type": "string", "description": "Optional UUID or human-readable ID of the artifact created/refined by this session"}
+                },
+                "required": ["session_id"]
+            }
+        ),
 
         # Gap Analyzer (RAAS-COMP-064)
         Tool(

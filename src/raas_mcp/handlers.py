@@ -1779,6 +1779,38 @@ async def handle_add_session_message(
     return [TextContent(type="text", text=text)], current_scope
 
 
+async def handle_complete_elicitation_session(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Mark an elicitation session as completed."""
+    session_id = arguments["session_id"]
+    final_artifact_id = arguments.get("final_artifact_id")
+
+    params = {}
+    if final_artifact_id:
+        params["final_artifact_id"] = final_artifact_id
+
+    response = await client.post(
+        f"/elicitation/sessions/{session_id}/complete",
+        params=params
+    )
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Completed elicitation session {result['human_readable_id']}")
+
+    text = (
+        f"Completed elicitation session: {result['human_readable_id']}\n"
+        f"Status: {result['status']}\n"
+        f"Completed at: {result.get('completed_at', 'N/A')}"
+    )
+    if final_artifact_id:
+        text += f"\nLinked to artifact: {final_artifact_id}"
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
 async def handle_analyze_requirement(
     arguments: dict,
     client: httpx.AsyncClient,

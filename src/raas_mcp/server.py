@@ -166,6 +166,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "create_elicitation_session": handlers.handle_create_elicitation_session,
                 "get_elicitation_session": handlers.handle_get_elicitation_session,
                 "add_session_message": handlers.handle_add_session_message,
+                "complete_elicitation_session": handlers.handle_complete_elicitation_session,
                 "analyze_requirement": handlers.handle_analyze_requirement,
                 "analyze_project": handlers.handle_analyze_project,
                 "analyze_contradictions": handlers.handle_analyze_contradictions,
