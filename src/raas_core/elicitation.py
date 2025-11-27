@@ -79,6 +79,33 @@ def get_clarification_point_by_human_id(
     ).first()
 
 
+def get_clarification_point_by_any_id(
+    db: Session,
+    point_id: str
+) -> Optional[ClarificationPoint]:
+    """Get a clarification point by UUID or human-readable ID (e.g., CLAR-001).
+
+    Args:
+        db: Database session
+        point_id: Either UUID string or human-readable ID
+
+    Returns:
+        ClarificationPoint instance or None if not found
+    """
+    # Try UUID first (most common case, faster)
+    try:
+        uuid_id = UUID(point_id)
+        return db.query(ClarificationPoint).filter(ClarificationPoint.id == uuid_id).first()
+    except (ValueError, AttributeError):
+        # Not a valid UUID, try human-readable ID
+        pass
+
+    # Try human-readable ID (case-insensitive)
+    return db.query(ClarificationPoint).filter(
+        ClarificationPoint.human_readable_id == point_id.upper()
+    ).first()
+
+
 def list_clarification_points(
     db: Session,
     organization_id: Optional[UUID] = None,

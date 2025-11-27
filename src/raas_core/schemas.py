@@ -967,9 +967,9 @@ class ElicitationSessionCreate(BaseModel):
     organization_id: UUID
     project_id: Optional[UUID] = None
     target_artifact_type: str  # epic, component, feature, requirement, guardrail
-    target_artifact_id: Optional[UUID] = None  # NULL if creating new
+    target_artifact_id: Optional[str] = None  # UUID or human-readable ID, NULL if creating new
     assignee_id: Optional[UUID] = None
-    clarification_point_id: Optional[UUID] = None
+    clarification_point_id: Optional[str] = None  # UUID or human-readable ID (e.g., CLAR-001)
     expires_at: Optional[datetime] = None
 
 

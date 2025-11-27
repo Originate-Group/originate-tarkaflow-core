@@ -1757,9 +1757,9 @@ def get_tools() -> list[Tool]:
                     "organization_id": {"type": "string", "description": "Organization UUID"},
                     "project_id": {"type": "string", "description": "Optional project UUID"},
                     "target_artifact_type": {"type": "string", "description": "Type to create (epic, component, feature, requirement, guardrail)"},
-                    "target_artifact_id": {"type": "string", "description": "UUID if refining existing artifact (optional)"},
+                    "target_artifact_id": {"type": "string", "description": "UUID or human-readable ID (e.g., RAAS-FEAT-042) if refining existing artifact (optional)"},
                     "assignee_id": {"type": "string", "description": "UUID of stakeholder"},
-                    "clarification_point_id": {"type": "string", "description": "If resolving a clarification point"}
+                    "clarification_point_id": {"type": "string", "description": "UUID or human-readable ID (e.g., CLAR-001) if resolving a clarification point"}
                 },
                 "required": ["organization_id", "target_artifact_type"]
             }
