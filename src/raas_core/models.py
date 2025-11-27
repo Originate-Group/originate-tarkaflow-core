@@ -782,9 +782,10 @@ class Task(Base):
     # Core task fields
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
-    task_type = Column(Enum(TaskType), nullable=False)
-    status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True)
-    priority = Column(Enum(TaskPriority), nullable=False, default=TaskPriority.MEDIUM, index=True)
+    # Use values_callable to serialize enum values (lowercase) instead of names (UPPERCASE)
+    task_type = Column(Enum(TaskType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
+    status = Column(Enum(TaskStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=TaskStatus.PENDING, index=True)
+    priority = Column(Enum(TaskPriority, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=TaskPriority.MEDIUM, index=True)
     due_date = Column(DateTime, nullable=True, index=True)
 
     # Source artifact linking (bidirectional reference)
@@ -839,8 +840,8 @@ class TaskHistory(Base):
         index=True
     )
 
-    # Change details
-    change_type = Column(Enum(TaskChangeType), nullable=False)
+    # Change details - use values_callable to serialize as lowercase
+    change_type = Column(Enum(TaskChangeType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     field_name = Column(String(50), nullable=True)
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
@@ -904,9 +905,9 @@ class TaskRoutingRule(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
 
-    # Rule matching criteria
-    scope = Column(Enum(RoutingRuleScope), nullable=False, default=RoutingRuleScope.ORGANIZATION)
-    match_type = Column(Enum(RoutingRuleMatchType), nullable=False)
+    # Rule matching criteria - use values_callable to serialize as lowercase
+    scope = Column(Enum(RoutingRuleScope, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=RoutingRuleScope.ORGANIZATION)
+    match_type = Column(Enum(RoutingRuleMatchType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     match_value = Column(String(100), nullable=False)
 
     # Assignment configuration
@@ -1051,13 +1052,15 @@ class ClarificationPoint(Base):
     description = Column(Text, nullable=True)
     context = Column(Text, nullable=True)  # Why this clarification is needed
 
-    # Priority and status
+    # Priority and status - use values_callable to serialize as lowercase
     priority = Column(
-        Enum(ClarificationPriority, name="clarificationpriority", create_type=False),
+        Enum(ClarificationPriority, name="clarificationpriority", create_type=False,
+             values_callable=lambda obj: [e.value for e in obj]),
         nullable=False, default=ClarificationPriority.MEDIUM
     )
     status = Column(
-        Enum(ClarificationStatus, name="clarificationstatus", create_type=False),
+        Enum(ClarificationStatus, name="clarificationstatus", create_type=False,
+             values_callable=lambda obj: [e.value for e in obj]),
         nullable=False, default=ClarificationStatus.PENDING
     )
 
@@ -1165,9 +1168,10 @@ class ElicitationSession(Base):
     assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
                          nullable=True, index=True)
 
-    # Status
+    # Status - use values_callable to serialize as lowercase
     status = Column(
-        Enum(ElicitationSessionStatus, name="elicitationsessionstatus", create_type=False),
+        Enum(ElicitationSessionStatus, name="elicitationsessionstatus", create_type=False,
+             values_callable=lambda obj: [e.value for e in obj]),
         nullable=False, default=ElicitationSessionStatus.ACTIVE
     )
 
