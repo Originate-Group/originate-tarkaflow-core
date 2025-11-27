@@ -2351,7 +2351,9 @@ def transition_change_request(
     if not cr:
         raise ValueError(f"Change request not found: {cr_id}")
 
-    current_status = cr.status
+    # Convert string status from DB to enum for comparison
+    # (status column is VARCHAR but we use enum in Python for type safety)
+    current_status = models.ChangeRequestStatus(cr.status)
     from datetime import datetime
 
     # Define valid transitions (TASK-030: added cancelled and superseded)
