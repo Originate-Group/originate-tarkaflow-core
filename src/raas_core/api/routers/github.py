@@ -36,7 +36,8 @@ from ...github_integration import (
     generate_webhook_secret,
     verify_webhook_signature,
 )
-from ..dependencies import get_db, get_current_user
+from ..database import get_db
+from ..dependencies import get_current_user_optional
 from .work_items import resolve_work_item_id
 
 logger = logging.getLogger("raas-core.github_api")
@@ -76,7 +77,7 @@ def config_to_response(config: GitHubConfiguration) -> GitHubConfigurationRespon
 async def create_configuration(
     data: GitHubConfigurationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Create a GitHub configuration for a project.
 
@@ -135,7 +136,7 @@ async def create_configuration(
 async def get_configuration(
     project_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get GitHub configuration for a project."""
     config = db.query(GitHubConfiguration).filter(
@@ -156,7 +157,7 @@ async def update_configuration(
     project_id: UUID,
     data: GitHubConfigurationUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Update GitHub configuration for a project."""
     config = db.query(GitHubConfiguration).filter(
@@ -201,7 +202,7 @@ async def update_configuration(
 async def delete_configuration(
     project_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Delete GitHub configuration for a project."""
     config = db.query(GitHubConfiguration).filter(
@@ -232,7 +233,7 @@ async def delete_configuration(
 async def verify_configuration(
     project_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Verify GitHub credentials can access the repository."""
     config = db.query(GitHubConfiguration).filter(
@@ -272,7 +273,7 @@ async def setup_webhook(
     project_id: UUID,
     webhook_url: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Set up a GitHub webhook for the repository.
 
@@ -327,7 +328,7 @@ async def setup_webhook(
 async def sync_work_item_to_issue(
     data: GitHubIssueSyncRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Sync a Work Item to a GitHub Issue.
 

@@ -44,7 +44,8 @@ from ...work_item_state_machine import (
     get_allowed_work_item_transitions,
     triggers_cr_merge,
 )
-from ..dependencies import get_db, get_current_user
+from ..database import get_db
+from ..dependencies import get_current_user_optional
 
 logger = logging.getLogger("raas-core.work_items")
 
@@ -312,7 +313,7 @@ def work_item_to_list_item(work_item: WorkItem) -> WorkItemListItem:
 async def create_work_item(
     data: WorkItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Create a new Work Item.
 
@@ -390,7 +391,7 @@ async def list_work_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """List Work Items with filtering and pagination."""
     query = db.query(WorkItem).options(
@@ -455,7 +456,7 @@ async def list_work_items(
 async def get_work_item(
     work_item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get a Work Item by UUID or human-readable ID."""
     work_item = resolve_work_item_id(db, work_item_id)
@@ -476,7 +477,7 @@ async def update_work_item(
     work_item_id: str,
     data: WorkItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Update a Work Item."""
     work_item = resolve_work_item_id(db, work_item_id)
@@ -591,7 +592,7 @@ async def transition_work_item(
     work_item_id: str,
     data: WorkItemTransition,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Transition a Work Item to a new status."""
     work_item = resolve_work_item_id(db, work_item_id)
@@ -644,7 +645,7 @@ async def get_work_item_history(
     work_item_id: str,
     limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get Work Item change history."""
     work_item = resolve_work_item_id(db, work_item_id)
@@ -683,7 +684,7 @@ async def get_work_item_history(
 async def get_allowed_transitions(
     work_item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get allowed status transitions for a Work Item."""
     work_item = resolve_work_item_id(db, work_item_id)
@@ -706,7 +707,7 @@ async def get_allowed_transitions(
 async def list_requirement_versions(
     requirement_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """List all versions of a requirement."""
     # Resolve requirement ID
@@ -766,7 +767,7 @@ async def get_requirement_version(
     requirement_id: str,
     version_number: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get a specific version of a requirement."""
     req_uuid = resolve_requirement_id(db, requirement_id)
@@ -816,7 +817,7 @@ async def diff_requirement_versions(
     from_version: int = Query(..., description="Source version number"),
     to_version: int = Query(..., description="Target version number"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get diff between two versions of a requirement."""
     req_uuid = resolve_requirement_id(db, requirement_id)
