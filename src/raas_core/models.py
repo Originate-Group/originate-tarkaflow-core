@@ -53,6 +53,19 @@ work_item_affects = Table(
 )
 
 
+# RAAS-FEAT-102: Release includes association table
+# Links Release work items to the IR/CR/BUG work items they bundle
+release_includes = Table(
+    'release_includes',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('release_id', UUID(as_uuid=True), ForeignKey('work_items.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('work_item_id', UUID(as_uuid=True), ForeignKey('work_items.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint('release_id', 'work_item_id', name='uq_release_includes_work_item'),
+)
+
+
 class RequirementType(str, enum.Enum):
     """Requirement type enum for hierarchy levels."""
 
@@ -159,6 +172,7 @@ class WorkItemType(str, enum.Enum):
     CR = "cr"           # Change Request - modifications to approved requirements
     BUG = "bug"         # Bug fix
     TASK = "task"       # General task
+    RELEASE = "release" # RAAS-FEAT-102: Release bundle for coordinated deployment
 
 
 class WorkItemStatus(str, enum.Enum):
@@ -1282,6 +1296,10 @@ class WorkItem(Base):
     # Structure: {github_issue_url, github_issue_number, pr_urls: [], commit_shas: [], release_tag}
     implementation_refs = Column(JSONB, nullable=True, default=dict)
 
+    # RAAS-FEAT-102: Release-specific fields (only for type=release)
+    release_tag = Column(String(50), nullable=True)  # e.g., "v1.2.0"
+    github_release_url = Column(String(500), nullable=True)  # URL to GitHub release
+
     # Tags for bidirectional linking (RAAS-FEAT-098)
     tags = Column(ARRAY(String), default=[])
 
@@ -1312,6 +1330,16 @@ class WorkItem(Base):
 
     # Versions created by this work item (for CRs)
     created_versions = relationship("RequirementVersion", back_populates="source_work_item")
+
+    # RAAS-FEAT-102: Release includes relationship (self-referential)
+    # For type=release: the IR/CR/BUG work items bundled in this release
+    included_work_items = relationship(
+        "WorkItem",
+        secondary=release_includes,
+        primaryjoin="WorkItem.id == release_includes.c.release_id",
+        secondaryjoin="WorkItem.id == release_includes.c.work_item_id",
+        backref="included_in_releases",  # Reverse: which releases include this work item
+    )
 
     @property
     def affects_count(self) -> int:

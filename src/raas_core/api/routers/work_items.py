@@ -25,6 +25,7 @@ from ...models import (
     ChangeType,
     User,
     work_item_affects,
+    release_includes,
 )
 from ...schemas import (
     WorkItemCreate,
@@ -252,6 +253,11 @@ def work_item_to_response(work_item: WorkItem, db: Session) -> WorkItemResponse:
 
     affected_ids = [r.id for r in work_item.affected_requirements]
 
+    # Release-specific: get included work item IDs (RAAS-FEAT-102)
+    included_ids = []
+    if work_item.work_item_type == WorkItemType.RELEASE:
+        included_ids = [wi.id for wi in work_item.included_work_items]
+
     return WorkItemResponse(
         id=work_item.id,
         human_readable_id=work_item.human_readable_id,
@@ -271,6 +277,10 @@ def work_item_to_response(work_item: WorkItem, db: Session) -> WorkItemResponse:
         proposed_content=work_item.proposed_content,
         baseline_hashes=work_item.baseline_hashes,
         implementation_refs=work_item.implementation_refs,
+        release_tag=work_item.release_tag,
+        github_release_url=work_item.github_release_url,
+        included_work_item_ids=included_ids,
+        includes_count=len(included_ids),
         created_at=work_item.created_at,
         updated_at=work_item.updated_at,
         created_by=work_item.created_by_user_id,
@@ -332,9 +342,32 @@ async def create_work_item(
         tags=data.tags,
         proposed_content=data.proposed_content,
         created_by_user_id=current_user.id,
+        # Release-specific fields (RAAS-FEAT-102)
+        release_tag=data.release_tag if data.work_item_type == WorkItemType.RELEASE else None,
+        github_release_url=data.github_release_url if data.work_item_type == WorkItemType.RELEASE else None,
     )
     db.add(work_item)
     db.flush()  # Get the ID and human_readable_id
+
+    # For Releases: resolve and link included work items (RAAS-FEAT-102)
+    if data.work_item_type == WorkItemType.RELEASE and data.includes:
+        included_items = []
+        for wi_identifier in data.includes:
+            included_wi = resolve_work_item_id(db, wi_identifier)
+            if not included_wi:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Work Item not found for release inclusion: {wi_identifier}"
+                )
+            # Only allow IR, CR, BUG to be included in releases (not TASK or RELEASE)
+            if included_wi.work_item_type not in [WorkItemType.IR, WorkItemType.CR, WorkItemType.BUG]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Only IR, CR, and BUG work items can be included in releases. "
+                           f"'{included_wi.human_readable_id}' is type '{included_wi.work_item_type.value}'"
+                )
+            included_items.append(included_wi)
+        work_item.included_work_items = included_items
 
     # Resolve and link affected requirements
     affected_reqs = []
@@ -516,18 +549,85 @@ async def update_work_item(
     if data.implementation_refs is not None:
         work_item.implementation_refs = data.implementation_refs
 
+    # Release-specific updates (RAAS-FEAT-102)
+    if work_item.work_item_type == WorkItemType.RELEASE:
+        if data.release_tag is not None and data.release_tag != work_item.release_tag:
+            changes.append(("release_tag", work_item.release_tag, data.release_tag))
+            work_item.release_tag = data.release_tag
+
+        if data.github_release_url is not None and data.github_release_url != work_item.github_release_url:
+            changes.append(("github_release_url", work_item.github_release_url, data.github_release_url))
+            work_item.github_release_url = data.github_release_url
+
+        if data.includes is not None:
+            # Resolve and update included work items
+            new_included = []
+            for wi_identifier in data.includes:
+                included_wi = resolve_work_item_id(db, wi_identifier)
+                if not included_wi:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Work Item not found for release inclusion: {wi_identifier}"
+                    )
+                # Only allow IR, CR, BUG to be included in releases
+                if included_wi.work_item_type not in [WorkItemType.IR, WorkItemType.CR, WorkItemType.BUG]:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Only IR, CR, and BUG work items can be included in releases. "
+                               f"'{included_wi.human_readable_id}' is type '{included_wi.work_item_type.value}'"
+                    )
+                new_included.append(included_wi)
+            work_item.included_work_items = new_included
+
     # Handle status transition
     if data.status is not None and data.status != work_item.status:
         try:
-            validate_work_item_transition(work_item.status, data.status)
+            validate_work_item_transition(work_item.status, data.status, work_item.work_item_type)
         except WorkItemStateTransitionError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
 
+        # RAAS-FEAT-102: Deployment gate - IR/CR/BUG must be in a Release to deploy
+        if data.status == WorkItemStatus.DEPLOYED:
+            if work_item.work_item_type in [WorkItemType.IR, WorkItemType.CR, WorkItemType.BUG]:
+                db.refresh(work_item, ["included_in_releases"])
+                if not work_item.included_in_releases:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Cannot deploy {work_item.work_item_type.value.upper()} work items directly. "
+                               f"Include '{work_item.human_readable_id}' in a Release first."
+                    )
+                deployed_release = None
+                for release in work_item.included_in_releases:
+                    if release.status == WorkItemStatus.DEPLOYED:
+                        deployed_release = release
+                        break
+                if not deployed_release:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Cannot deploy '{work_item.human_readable_id}' - the containing Release must be deployed first."
+                    )
+
         old_status = work_item.status
         work_item.status = data.status
+
+        # RAAS-FEAT-102: Release deployment cascade
+        if data.status == WorkItemStatus.DEPLOYED and work_item.work_item_type == WorkItemType.RELEASE:
+            db.refresh(work_item, ["included_work_items"])
+            for included_wi in work_item.included_work_items:
+                if included_wi.status == WorkItemStatus.VALIDATED:
+                    included_wi.status = WorkItemStatus.DEPLOYED
+                    included_wi.updated_at = datetime.utcnow()
+                    included_wi.updated_by_user_id = current_user.id
+                    create_work_item_history(
+                        db, included_wi, "status_changed", current_user.id,
+                        field_name="status",
+                        old_value=WorkItemStatus.VALIDATED.value,
+                        new_value=WorkItemStatus.DEPLOYED.value,
+                        change_reason=f"Auto-deployed via Release {work_item.human_readable_id}",
+                    )
 
         # Handle completion timestamps
         if data.status == WorkItemStatus.COMPLETED:
@@ -535,6 +635,24 @@ async def update_work_item(
             # Execute CR merge if applicable
             if triggers_cr_merge(old_status, data.status):
                 execute_cr_merge(db, work_item, current_user.id)
+            # RAAS-FEAT-102: Release completion cascade
+            if work_item.work_item_type == WorkItemType.RELEASE:
+                db.refresh(work_item, ["included_work_items"])
+                for included_wi in work_item.included_work_items:
+                    if included_wi.status == WorkItemStatus.DEPLOYED:
+                        included_wi.status = WorkItemStatus.COMPLETED
+                        included_wi.completed_at = datetime.utcnow()
+                        included_wi.updated_at = datetime.utcnow()
+                        included_wi.updated_by_user_id = current_user.id
+                        if triggers_cr_merge(WorkItemStatus.DEPLOYED, WorkItemStatus.COMPLETED):
+                            execute_cr_merge(db, included_wi, current_user.id)
+                        create_work_item_history(
+                            db, included_wi, "status_changed", current_user.id,
+                            field_name="status",
+                            old_value=WorkItemStatus.DEPLOYED.value,
+                            new_value=WorkItemStatus.COMPLETED.value,
+                            change_reason=f"Auto-completed via Release {work_item.human_readable_id}",
+                        )
         elif data.status == WorkItemStatus.CANCELLED:
             work_item.cancelled_at = datetime.utcnow()
 
@@ -582,7 +700,10 @@ async def update_work_item(
         )
 
     db.commit()
-    db.refresh(work_item, ["assignee", "created_by_user", "affected_requirements"])
+    refresh_attrs = ["assignee", "created_by_user", "affected_requirements"]
+    if work_item.work_item_type == WorkItemType.RELEASE:
+        refresh_attrs.append("included_work_items")
+    db.refresh(work_item, refresh_attrs)
 
     return work_item_to_response(work_item, db)
 
@@ -604,17 +725,57 @@ async def transition_work_item(
 
     # Validate transition
     try:
-        validate_work_item_transition(work_item.status, data.new_status)
+        validate_work_item_transition(work_item.status, data.new_status, work_item.work_item_type)
     except WorkItemStateTransitionError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
 
+    # RAAS-FEAT-102: Deployment gate - IR/CR/BUG must be in a Release to deploy
+    if data.new_status == WorkItemStatus.DEPLOYED:
+        if work_item.work_item_type in [WorkItemType.IR, WorkItemType.CR, WorkItemType.BUG]:
+            # Check if this work item is included in a Release
+            db.refresh(work_item, ["included_in_releases"])
+            if not work_item.included_in_releases:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot deploy {work_item.work_item_type.value.upper()} work items directly. "
+                           f"Include '{work_item.human_readable_id}' in a Release first."
+                )
+            # Check if any containing Release is already deployed
+            deployed_release = None
+            for release in work_item.included_in_releases:
+                if release.status == WorkItemStatus.DEPLOYED:
+                    deployed_release = release
+                    break
+            if not deployed_release:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot deploy '{work_item.human_readable_id}' - the containing Release must be deployed first."
+                )
+
     old_status = work_item.status
     work_item.status = data.new_status
     work_item.updated_at = datetime.utcnow()
     work_item.updated_by_user_id = current_user.id
+
+    # RAAS-FEAT-102: Release deployment cascade - deploy all included items when Release deploys
+    if data.new_status == WorkItemStatus.DEPLOYED and work_item.work_item_type == WorkItemType.RELEASE:
+        db.refresh(work_item, ["included_work_items"])
+        for included_wi in work_item.included_work_items:
+            if included_wi.status == WorkItemStatus.VALIDATED:
+                included_wi.status = WorkItemStatus.DEPLOYED
+                included_wi.updated_at = datetime.utcnow()
+                included_wi.updated_by_user_id = current_user.id
+                create_work_item_history(
+                    db, included_wi, "status_changed", current_user.id,
+                    field_name="status",
+                    old_value=WorkItemStatus.VALIDATED.value,
+                    new_value=WorkItemStatus.DEPLOYED.value,
+                    change_reason=f"Auto-deployed via Release {work_item.human_readable_id}",
+                )
+                logger.info(f"Auto-deployed {included_wi.human_readable_id} via Release {work_item.human_readable_id}")
 
     # Handle completion timestamps
     if data.new_status == WorkItemStatus.COMPLETED:
@@ -622,6 +783,26 @@ async def transition_work_item(
         # Execute CR merge if applicable
         if triggers_cr_merge(old_status, data.new_status):
             execute_cr_merge(db, work_item, current_user.id)
+        # RAAS-FEAT-102: Release completion cascade - complete all deployed included items
+        if work_item.work_item_type == WorkItemType.RELEASE:
+            db.refresh(work_item, ["included_work_items"])
+            for included_wi in work_item.included_work_items:
+                if included_wi.status == WorkItemStatus.DEPLOYED:
+                    included_wi.status = WorkItemStatus.COMPLETED
+                    included_wi.completed_at = datetime.utcnow()
+                    included_wi.updated_at = datetime.utcnow()
+                    included_wi.updated_by_user_id = current_user.id
+                    # Execute CR merge for any included CRs
+                    if triggers_cr_merge(WorkItemStatus.DEPLOYED, WorkItemStatus.COMPLETED):
+                        execute_cr_merge(db, included_wi, current_user.id)
+                    create_work_item_history(
+                        db, included_wi, "status_changed", current_user.id,
+                        field_name="status",
+                        old_value=WorkItemStatus.DEPLOYED.value,
+                        new_value=WorkItemStatus.COMPLETED.value,
+                        change_reason=f"Auto-completed via Release {work_item.human_readable_id}",
+                    )
+                    logger.info(f"Auto-completed {included_wi.human_readable_id} via Release {work_item.human_readable_id}")
     elif data.new_status == WorkItemStatus.CANCELLED:
         work_item.cancelled_at = datetime.utcnow()
 
@@ -694,7 +875,7 @@ async def get_allowed_transitions(
             detail=f"Work Item not found: {work_item_id}"
         )
 
-    allowed = get_allowed_work_item_transitions(work_item.status)
+    allowed = get_allowed_work_item_transitions(work_item.status, work_item.work_item_type)
     return [s.value for s in allowed]
 
 

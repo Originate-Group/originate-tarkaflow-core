@@ -1147,6 +1147,22 @@ class WorkItemCreate(BaseModel):
         description="For CRs: {requirement_id: 'new markdown content'}"
     )
 
+    # Release-specific fields (RAAS-FEAT-102)
+    release_tag: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="For Releases: Git tag or version (e.g., 'v1.2.0')"
+    )
+    github_release_url: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="For Releases: GitHub release URL"
+    )
+    includes: list[str] = Field(
+        default_factory=list,
+        description="For Releases: List of Work Item UUIDs or human-readable IDs to include in release"
+    )
+
 
 class WorkItemUpdate(BaseModel):
     """Schema for updating a Work Item."""
@@ -1167,6 +1183,14 @@ class WorkItemUpdate(BaseModel):
     # CR-specific updates
     proposed_content: Optional[dict] = None
     implementation_refs: Optional[dict] = None
+
+    # Release-specific updates (RAAS-FEAT-102)
+    release_tag: Optional[str] = Field(None, max_length=50)
+    github_release_url: Optional[str] = Field(None, max_length=500)
+    includes: Optional[list[str]] = Field(
+        None,
+        description="For Releases: List of Work Item UUIDs or human-readable IDs (replaces existing)"
+    )
 
 
 class WorkItemTransition(BaseModel):
@@ -1202,6 +1226,12 @@ class WorkItemResponse(BaseModel):
 
     # Implementation references
     implementation_refs: Optional[dict] = None
+
+    # Release-specific (RAAS-FEAT-102)
+    release_tag: Optional[str] = None
+    github_release_url: Optional[str] = None
+    included_work_item_ids: list[UUID] = Field(default_factory=list)
+    includes_count: int = Field(default=0, description="Number of Work Items included in release")
 
     # Audit
     created_at: datetime
