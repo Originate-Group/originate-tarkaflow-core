@@ -174,7 +174,12 @@ class RequirementWithChildren(RequirementResponse):
 # History Schemas
 
 class RequirementHistoryResponse(BaseModel):
-    """Schema for requirement history entries."""
+    """Schema for requirement history entries.
+
+    CR-012 (BUG-002): Includes director_id and actor_id for accountability:
+    - director_id: Human user who authorized the change
+    - actor_id: Agent account that executed the change (if applicable)
+    """
 
     id: UUID
     requirement_id: UUID
@@ -185,6 +190,9 @@ class RequirementHistoryResponse(BaseModel):
     changed_by: Optional[str] = None
     changed_at: datetime
     change_reason: Optional[str] = None
+    # CR-012 (BUG-002): Director/Actor accountability fields
+    director_id: Optional[UUID] = None
+    actor_id: Optional[UUID] = None
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
