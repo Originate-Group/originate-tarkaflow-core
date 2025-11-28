@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Table,
     text,
+    LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
