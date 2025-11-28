@@ -2013,3 +2013,123 @@ async def handle_analyze_contradictions(
         text_parts.append("")
 
     return [TextContent(type="text", text="\n".join(text_parts))], current_scope
+
+
+# ============================================================================
+# Work Item Handlers (CR-010: RAAS-COMP-075)
+# ============================================================================
+
+
+async def handle_list_work_items(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """List Work Items with filtering and pagination."""
+    params = {k: v for k, v in arguments.items() if v is not None}
+    response = await client.get("/work-items/", params=params)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully listed {result['total']} work items")
+
+    if result['total'] == 0:
+        return [TextContent(type="text", text="No work items found matching criteria.")], current_scope
+
+    items_text = "\n".join([formatters.format_work_item_summary(item) for item in result['items']])
+    summary = f"Found {result['total']} work items (page {result['page']} of {result['total_pages']})\n\n{items_text}"
+
+    return [TextContent(type="text", text=summary)], current_scope
+
+
+async def handle_get_work_item(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get a Work Item by UUID or human-readable ID."""
+    work_item_id = arguments["work_item_id"]
+    response = await client.get(f"/work-items/{work_item_id}")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully retrieved work item {work_item_id}: {result['title']}")
+
+    return [TextContent(type="text", text=formatters.format_work_item(result))], current_scope
+
+
+async def handle_create_work_item(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Create a new Work Item."""
+    response = await client.post("/work-items/", json=arguments)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully created work item: {result['human_readable_id']}")
+
+    text = (f"Created work item: {result['human_readable_id']}\n"
+            f"Type: {result['work_item_type']}\n"
+            f"Status: {result['status']}\n\n"
+            f"Full details:\n{formatters.format_work_item(result)}")
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_update_work_item(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Update a Work Item."""
+    work_item_id = arguments.pop("work_item_id")
+    response = await client.patch(f"/work-items/{work_item_id}", json=arguments)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully updated work item: {result['human_readable_id']}")
+
+    return [TextContent(type="text", text=f"Updated work item:\n{formatters.format_work_item(result)}")], current_scope
+
+
+async def handle_transition_work_item(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Transition a Work Item to a new status."""
+    work_item_id = arguments["work_item_id"]
+    new_status = arguments["new_status"]
+
+    response = await client.post(f"/work-items/{work_item_id}/transition", json={"new_status": new_status})
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully transitioned work item {result['human_readable_id']} to {new_status}")
+
+    text = (f"Transitioned {result['human_readable_id']} to **{new_status}**\n\n"
+            f"{formatters.format_work_item(result)}")
+
+    return [TextContent(type="text", text=text)], current_scope
+
+
+async def handle_get_work_item_history(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get change history for a Work Item."""
+    work_item_id = arguments["work_item_id"]
+    params = {}
+    if arguments.get("limit"):
+        params["limit"] = arguments["limit"]
+
+    response = await client.get(f"/work-items/{work_item_id}/history", params=params)
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Successfully retrieved {len(result)} history entries for work item {work_item_id}")
+
+    if not result:
+        return [TextContent(type="text", text=f"No history found for work item {work_item_id}")], current_scope
+
+    history_text = "\n".join([formatters.format_work_item_history(entry) for entry in result])
+    text = f"**Work Item History ({work_item_id})**\n\n{history_text}"
+
+    return [TextContent(type="text", text=text)], current_scope

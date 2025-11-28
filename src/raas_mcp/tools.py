@@ -1825,4 +1825,131 @@ def get_tools() -> list[Tool]:
                 "required": ["scope_id"]
             }
         ),
+
+        # ========================================================================
+        # Work Items (CR-010: RAAS-COMP-075)
+        # ========================================================================
+
+        Tool(
+            name="list_work_items",
+            description="List Work Items with filtering and pagination. "
+                       "\n\nWork Items track implementation work: IR (Implementation Request), CR (Change Request), BUG, TASK."
+                       "\n\nFILTERS:"
+                       "\n• organization_id: Filter by organization UUID"
+                       "\n• project_id: Filter by project UUID"
+                       "\n• work_item_type: ir, cr, bug, task"
+                       "\n• status: created, in_progress, implemented, validated, deployed, completed, cancelled"
+                       "\n• assigned_to: Filter by assigned user UUID"
+                       "\n• tags: Comma-separated tags"
+                       "\n• include_completed: Include completed/cancelled items (default: false)"
+                       "\n\nRETURNS: Paginated list of work items",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {"type": "string", "description": "Filter by organization UUID"},
+                    "project_id": {"type": "string", "description": "Filter by project UUID"},
+                    "work_item_type": {"type": "string", "enum": ["ir", "cr", "bug", "task"], "description": "Filter by type"},
+                    "status": {"type": "string", "enum": ["created", "in_progress", "implemented", "validated", "deployed", "completed", "cancelled"], "description": "Filter by status"},
+                    "assigned_to": {"type": "string", "description": "Filter by assigned user UUID"},
+                    "search": {"type": "string", "description": "Search in title and description"},
+                    "tags": {"type": "string", "description": "Comma-separated tags"},
+                    "include_completed": {"type": "boolean", "description": "Include completed/cancelled items (default: false)"},
+                    "page": {"type": "integer", "description": "Page number (default: 1)"},
+                    "page_size": {"type": "integer", "description": "Items per page (default: 50, max: 100)"}
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_work_item",
+            description="Get a Work Item by UUID or human-readable ID (e.g., 'IR-001', 'CR-005'). "
+                       "\n\nRETURNS: Full work item details including affected requirements and implementation refs.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID (e.g., 'IR-001')"}
+                },
+                "required": ["work_item_id"]
+            }
+        ),
+        Tool(
+            name="create_work_item",
+            description="Create a new Work Item. "
+                       "\n\nWork Item types:"
+                       "\n• ir: Implementation Request - new feature implementation"
+                       "\n• cr: Change Request - modify existing requirements (triggers merge on completion)"
+                       "\n• bug: Bug fix"
+                       "\n• task: General task"
+                       "\n\nAFFECTS: List requirement IDs (UUID or human-readable) that this work item affects. "
+                       "For CRs, these requirements will be updated when the CR is completed."
+                       "\n\nPROPOSED_CONTENT (CR only): For CRs, provide new markdown content for affected requirements. "
+                       "Format: {requirement_id: \"new markdown content\"}",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "organization_id": {"type": "string", "description": "Organization UUID (required)"},
+                    "project_id": {"type": "string", "description": "Project UUID (optional)"},
+                    "work_item_type": {"type": "string", "enum": ["ir", "cr", "bug", "task"], "description": "Type of work item (required)"},
+                    "title": {"type": "string", "description": "Work item title (required)"},
+                    "description": {"type": "string", "description": "Detailed description"},
+                    "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Priority (default: medium)"},
+                    "assigned_to": {"type": "string", "description": "Assigned user UUID"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                    "affects": {"type": "array", "items": {"type": "string"}, "description": "Requirement IDs (UUID or human-readable) affected by this work"},
+                    "proposed_content": {"type": "object", "description": "For CRs: {requirement_id: 'new markdown content'}"}
+                },
+                "required": ["organization_id", "work_item_type", "title"]
+            }
+        ),
+        Tool(
+            name="update_work_item",
+            description="Update a Work Item's title, description, priority, assignment, or affects list. "
+                       "\n\nFor status changes, use transition_work_item instead.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID"},
+                    "title": {"type": "string", "description": "New title"},
+                    "description": {"type": "string", "description": "New description"},
+                    "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "New priority"},
+                    "assigned_to": {"type": "string", "description": "New assigned user UUID"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "New tags (replaces existing)"},
+                    "affects": {"type": "array", "items": {"type": "string"}, "description": "New affected requirements (replaces existing)"},
+                    "proposed_content": {"type": "object", "description": "For CRs: updated proposed content"},
+                    "implementation_refs": {"type": "object", "description": "GitHub references: {github_issue_url, pr_urls[], commit_shas[], release_tag}"}
+                },
+                "required": ["work_item_id"]
+            }
+        ),
+        Tool(
+            name="transition_work_item",
+            description="Transition a Work Item to a new status. "
+                       "\n\nLIFECYCLE: created -> in_progress -> implemented -> validated -> deployed -> completed"
+                       "\n\nSPECIAL TRANSITIONS:"
+                       "\n• cancelled: Can be reached from any non-terminal state"
+                       "\n• completed (for CRs): Triggers automatic merge of proposed content to affected requirements"
+                       "\n\nERRORS:"
+                       "\n• 400: Invalid transition (must follow lifecycle)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID"},
+                    "new_status": {"type": "string", "enum": ["created", "in_progress", "implemented", "validated", "deployed", "completed", "cancelled"], "description": "Target status"}
+                },
+                "required": ["work_item_id", "new_status"]
+            }
+        ),
+        Tool(
+            name="get_work_item_history",
+            description="Get change history for a Work Item. "
+                       "\n\nRETURNS: List of changes with timestamps, change types, and who made them.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID"},
+                    "limit": {"type": "integer", "description": "Max entries to return (default: 50, max: 100)"}
+                },
+                "required": ["work_item_id"]
+            }
+        ),
     ]

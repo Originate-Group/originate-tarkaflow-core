@@ -168,6 +168,13 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "analyze_requirement": handlers.handle_analyze_requirement,
                 "analyze_project": handlers.handle_analyze_project,
                 "analyze_contradictions": handlers.handle_analyze_contradictions,
+                # Work Item handlers (CR-010: RAAS-COMP-075)
+                "list_work_items": handlers.handle_list_work_items,
+                "get_work_item": handlers.handle_get_work_item,
+                "create_work_item": handlers.handle_create_work_item,
+                "update_work_item": handlers.handle_update_work_item,
+                "transition_work_item": handlers.handle_transition_work_item,
+                "get_work_item_history": handlers.handle_get_work_item_history,
             }
 
             # Look up and execute handler
