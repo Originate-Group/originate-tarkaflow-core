@@ -145,12 +145,6 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "get_guardrail": handlers.handle_get_guardrail,
                 "update_guardrail": handlers.handle_update_guardrail,
                 "list_guardrails": handlers.handle_list_guardrails,
-                # Change request handlers (RAAS-COMP-068)
-                "create_change_request": handlers.handle_create_change_request,
-                "get_change_request": handlers.handle_get_change_request,
-                "list_change_requests": handlers.handle_list_change_requests,
-                "transition_change_request": handlers.handle_transition_change_request,
-                "complete_change_request": handlers.handle_complete_change_request,
                 # Task handlers (RAAS-COMP-065)
                 "create_task": handlers.handle_create_task,
                 "list_tasks": handlers.handle_list_tasks,
@@ -181,6 +175,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "diff_requirement_versions": handlers.handle_diff_requirement_versions,
                 "mark_requirement_deployed": handlers.handle_mark_requirement_deployed,
                 "batch_mark_requirements_deployed": handlers.handle_batch_mark_requirements_deployed,
+                # CR-002 (RAAS-FEAT-104): Work Item Diffs and Conflict Detection
+                "get_work_item_diffs": handlers.handle_get_work_item_diffs,
+                "check_work_item_conflicts": handlers.handle_check_work_item_conflicts,
             }
 
             # Look up and execute handler

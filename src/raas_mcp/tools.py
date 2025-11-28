@@ -900,8 +900,6 @@ def get_tools() -> list[Tool]:
                        "\n2. DEPENDENCY UPDATE (simpler, no markdown needed):"
                        "\n   a) Pass depends_on=[...] with array of requirement UUIDs or human-readable IDs"
                        "\n   b) Use empty array [] to clear all dependencies"
-                       "\n\nIMPORTANT: For requirements in approved+ status, a change_request_id is required. "
-                       "Draft and review status requirements can be updated without a CR."
                        "\n\nRETURNS: Updated requirement object with all fields"
                        "\n\nRELATED TOOLS:"
                        "\n• Use get_requirement() first to fetch current content"
@@ -914,7 +912,6 @@ def get_tools() -> list[Tool]:
                        "\n• 400: Circular dependency detected"
                        "\n• 400: Dependency requirement not found or not in same project"
                        "\n• 403: Forbidden (no permission to update)"
-                       "\n• 403: Change request required (for approved+ requirements without valid CR)"
                        "\n\nNOTE: Status changes via markdown frontmatter follow state machine rules (see transition_status for details)."
                        "\n\nREMINDER: Keep requirements outcome-focused (what/why), not prescriptive (how).",
             inputSchema={
@@ -937,13 +934,6 @@ def get_tools() -> list[Tool]:
                                      "Dependencies must be valid requirements in the same project. "
                                      "Circular dependencies are rejected. "
                                      "Example: ['uuid1', 'uuid2'] or use human-readable IDs: ['RAAS-FEAT-001', 'RAAS-REQ-042']"
-                    },
-                    "change_request_id": {
-                        "type": "string",
-                        "description": "OPTIONAL: Change request UUID or human-readable ID (e.g., 'CR-001'). "
-                                     "REQUIRED for requirements in approved+ status. Draft and review status requirements "
-                                     "can be updated without a CR. The CR must be in 'approved' status and the requirement "
-                                     "must be in the CR's affects list."
                     },
                     "title": {
                         "type": "string",
@@ -1259,181 +1249,6 @@ def get_tools() -> list[Tool]:
                 }
             }
         ),
-        # ============================================================================
-        # Change Request Tools (RAAS-COMP-068)
-        # ============================================================================
-        Tool(
-            name="create_change_request",
-            description="Create a new change request with justification and affected requirements. "
-                       "\n\nChange Requests (CR) gate updates to requirements that have passed review status. "
-                       "This ensures traceability and controlled changes in production systems."
-                       "\n\nWORKFLOW:"
-                       "\n1. Create CR with justification + affects list (which requirements you intend to modify)"
-                       "\n2. Submit for review: transition_change_request(new_status='review')"
-                       "\n3. Get approval: transition_change_request(new_status='approved')"
-                       "\n4. Use the approved CR to update requirements (change_request_id parameter)"
-                       "\n5. Complete: complete_change_request() when done"
-                       "\n\nRETURNS: Created change request with human-readable ID (e.g., CR-001)"
-                       "\n\nRELATED TOOLS:"
-                       "\n• list_requirements() to find requirement IDs for affects list"
-                       "\n• transition_change_request() to move CR through lifecycle"
-                       "\n• update_requirement() with change_request_id to make changes"
-                       "\n\nERRORS:"
-                       "\n• 400: Justification too short (min 10 chars)"
-                       "\n• 400: Empty affects list"
-                       "\n• 400: Requirement not found in affects list"
-                       "\n• 403: Forbidden (must be org member)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {
-                        "type": "string",
-                        "description": "Organization UUID"
-                    },
-                    "justification": {
-                        "type": "string",
-                        "description": "Justification for the change (minimum 10 characters)"
-                    },
-                    "affects": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of requirement UUIDs this CR will modify"
-                    }
-                },
-                "required": ["organization_id", "justification", "affects"]
-            }
-        ),
-        Tool(
-            name="get_change_request",
-            description="Get a change request by UUID or human-readable ID. "
-                       "\n\nAccepts both UUID (e.g., 'a1b2c3d4-...') and human-readable ID "
-                       "(e.g., 'CR-001', case-insensitive)."
-                       "\n\nRETURNS: Full change request details including:"
-                       "\n• justification and status"
-                       "\n• requestor and approver info"
-                       "\n• affects list (requirements in scope)"
-                       "\n• modifications count (requirements actually changed)"
-                       "\n• approval and completion timestamps"
-                       "\n\nERRORS:"
-                       "\n• 404: Change request not found"
-                       "\n• 403: Forbidden (not a member of CR's organization)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "cr_id": {
-                        "type": "string",
-                        "description": "UUID or human-readable ID (e.g., 'CR-001') of the change request"
-                    }
-                },
-                "required": ["cr_id"]
-            }
-        ),
-        Tool(
-            name="list_change_requests",
-            description="List and filter change requests with pagination. "
-                       "\n\nFILTERS:"
-                       "\n• organization_id: Filter by organization UUID"
-                       "\n• status: Filter by status (draft, review, approved, completed, cancelled, superseded)"
-                       "\n\nRETURNS: Paginated list with lightweight items"
-                       "\n• Each item includes: id, human_readable_id, justification, status, timestamps, counts"
-                       "\n• Superseded CRs include superseded_by_hrid to show which CR replaced them"
-                       "\n• Use get_change_request() for full details"
-                       "\n\nCOMMON PATTERNS:"
-                       "\n• Find approved CRs: list_change_requests(status='approved')"
-                       "\n• Find pending reviews: list_change_requests(status='review')",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "organization_id": {
-                        "type": "string",
-                        "description": "Filter by organization UUID (optional)"
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["draft", "review", "approved", "completed", "cancelled", "superseded"],
-                        "description": "Filter by status (optional)"
-                    },
-                    "page": {
-                        "type": "integer",
-                        "description": "Page number (default: 1)"
-                    },
-                    "page_size": {
-                        "type": "integer",
-                        "description": "Items per page (default: 50)"
-                    }
-                }
-            }
-        ),
-        Tool(
-            name="transition_change_request",
-            description="Transition a change request to a new status. "
-                       "\n\nCR LIFECYCLE: draft -> review -> approved -> completed"
-                       "\n\nTERMINAL STATES: completed, cancelled, superseded"
-                       "\n\nVALID TRANSITIONS:"
-                       "\n• draft -> review (submit for review)"
-                       "\n• draft -> cancelled (abandon before review)"
-                       "\n• review -> approved (approve the CR)"
-                       "\n• review -> draft (send back for revision)"
-                       "\n• review -> cancelled (reject during review)"
-                       "\n• approved -> completed (mark as done)"
-                       "\n• approved -> cancelled (abandon after approval)"
-                       "\n• approved -> superseded (replaced by another CR - requires superseding_cr_id)"
-                       "\n\nTRACKING:"
-                       "\n• Moving to 'approved' records approved_at and approved_by"
-                       "\n• Moving to 'completed' records completed_at"
-                       "\n• Moving to 'cancelled' records cancelled_at"
-                       "\n• Moving to 'superseded' records superseded_at and superseded_by"
-                       "\n\nPERMISSIONS:"
-                       "\n• Approval requires admin role"
-                       "\n• Other transitions require member role"
-                       "\n\nERRORS:"
-                       "\n• 404: Change request not found"
-                       "\n• 400: Invalid transition"
-                       "\n• 400: superseding_cr_id required for superseded transition"
-                       "\n• 403: Forbidden (insufficient permissions)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "cr_id": {
-                        "type": "string",
-                        "description": "UUID or human-readable ID of the change request"
-                    },
-                    "new_status": {
-                        "type": "string",
-                        "enum": ["draft", "review", "approved", "completed", "cancelled", "superseded"],
-                        "description": "Target status"
-                    },
-                    "superseding_cr_id": {
-                        "type": "string",
-                        "description": "UUID or HRID of the CR that supersedes this one (required when new_status='superseded')"
-                    }
-                },
-                "required": ["cr_id", "new_status"]
-            }
-        ),
-        Tool(
-            name="complete_change_request",
-            description="Mark an approved change request as completed. "
-                       "\n\nThe CR must be in 'approved' status. This action:"
-                       "\n• Sets status to 'completed'"
-                       "\n• Sets completed_at timestamp"
-                       "\n\nAfter completion, the CR cannot be modified or used for further updates. "
-                       "This is a convenience tool - equivalent to transition_change_request(new_status='completed')."
-                       "\n\nERRORS:"
-                       "\n• 404: Change request not found"
-                       "\n• 400: CR not in approved status"
-                       "\n• 403: Forbidden (must be org member)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "cr_id": {
-                        "type": "string",
-                        "description": "UUID or human-readable ID of the change request"
-                    }
-                },
-                "required": ["cr_id"]
-            }
-        ),
 
         # ============================================================================
         # Task Queue Tools (RAAS-EPIC-027, RAAS-COMP-065)
@@ -1500,7 +1315,7 @@ def get_tools() -> list[Tool]:
                     },
                     "source_type": {
                         "type": "string",
-                        "description": "Source system type (elicitation_session, clarification_point, requirement, guardrail, change_request)"
+                        "description": "Source system type (elicitation_session, clarification_point, requirement, guardrail, work_item)"
                     },
                     "source_id": {
                         "type": "string",
@@ -2045,6 +1860,44 @@ def get_tools() -> list[Tool]:
                     }
                 },
                 "required": ["requirement_ids"]
+            }
+        ),
+        # CR-002 (RAAS-FEAT-104): Work Item Diffs and Conflict Detection
+        Tool(
+            name="get_work_item_diffs",
+            description="Get diffs for all affected requirements in a Work Item (CR-002: RAAS-FEAT-104). "
+                       "\n\nFor CR review, shows actual content changes for each affected requirement. "
+                       "For CRs with proposed_content, shows diff between current_version and proposed. "
+                       "For other Work Items, shows diff between current_version and latest version."
+                       "\n\nUSE CASES:"
+                       "\n• CR review: See exactly what will change when CR is merged"
+                       "\n• Implementation review: See changes since last approval"
+                       "\n\nRETURNS: Diff details for each affected requirement with content and change summary",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID (e.g., 'CR-001', 'IR-042')"}
+                },
+                "required": ["work_item_id"]
+            }
+        ),
+        Tool(
+            name="check_work_item_conflicts",
+            description="Check for conflicts before approving/merging a Work Item (CR-002: RAAS-FEAT-104). "
+                       "\n\nProactive conflict detection that surfaces issues to reviewers before approval. "
+                       "Compares baseline_hashes (captured when Work Item created) to current content hashes. "
+                       "If a requirement's content changed since Work Item creation, it's flagged as conflict."
+                       "\n\nWHEN TO USE:"
+                       "\n• Before approving a CR - ensure no one else modified the requirements"
+                       "\n• Before merging - detect concurrent changes"
+                       "\n• During review - surface conflicts early"
+                       "\n\nRETURNS: Conflict status for each affected requirement with has_conflicts flag",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID (e.g., 'CR-001', 'IR-042')"}
+                },
+                "required": ["work_item_id"]
             }
         ),
     ]

@@ -515,10 +515,17 @@ class ChangeType(str, enum.Enum):
     DELETED = "deleted"
     STATUS_CHANGED = "status_changed"
     DEPLOYED = "deployed"  # CR-002: Track deployment events
+    VERSION_POINTER_CHANGED = "version_pointer_changed"  # CR-002: Track current_version_id updates
 
 
 class RequirementHistory(Base):
-    """Audit trail for requirement changes."""
+    """Audit trail for requirement changes.
+
+    CR-002 (RAAS-FEAT-063): Status transitions log both director and actor:
+    - director_id: Human user who authorized the change
+    - actor_id: Agent account that executed the change (if applicable)
+    - changed_by_user_id: Legacy field, kept for backwards compatibility
+    """
 
     __tablename__ = "requirement_history"
 
@@ -536,9 +543,14 @@ class RequirementHistory(Base):
     old_value = Column(Text)
     new_value = Column(Text)
 
-    # Who and when
+    # Who and when (legacy - kept for backwards compatibility)
     changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
     changed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # CR-002 (RAAS-FEAT-063): Director/Actor tracking for accountability
+    # Director = human who authorized, Actor = agent who executed
+    director_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
 
     # Context
     change_reason = Column(Text)
@@ -546,7 +558,9 @@ class RequirementHistory(Base):
 
     # Relationships
     requirement = relationship("Requirement", back_populates="history")
-    changed_by_user = relationship("User")
+    changed_by_user = relationship("User", foreign_keys=[changed_by_user_id])
+    director = relationship("User", foreign_keys=[director_id])
+    actor = relationship("User", foreign_keys=[actor_id])
     organization = relationship("Organization")
 
     def __repr__(self) -> str:
@@ -673,133 +687,6 @@ class Guardrail(Base):
 
     def __repr__(self) -> str:
         return f"<Guardrail {self.category.value}: {self.title}>"
-
-
-class ChangeRequestStatus(str, enum.Enum):
-    """Change request lifecycle status enum (RAAS-FEAT-077).
-
-    Lifecycle: draft -> review -> approved -> completed
-    Terminal states: completed, cancelled, superseded
-    """
-
-    DRAFT = "draft"
-    REVIEW = "review"
-    APPROVED = "approved"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"      # CR abandoned (from draft, review, or approved)
-    SUPERSEDED = "superseded"    # CR replaced by another CR (from approved only)
-
-
-# Association table for change request affects (declared scope)
-change_request_affects = Table(
-    'change_request_affects',
-    Base.metadata,
-    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
-    Column('change_request_id', UUID(as_uuid=True), ForeignKey('change_requests.id', ondelete='CASCADE'), nullable=False, index=True),
-    Column('requirement_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
-    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
-    UniqueConstraint('change_request_id', 'requirement_id', name='uq_cr_affects_requirement'),
-)
-
-
-# Association table for change request modifications (actual changes)
-change_request_modifications = Table(
-    'change_request_modifications',
-    Base.metadata,
-    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
-    Column('change_request_id', UUID(as_uuid=True), ForeignKey('change_requests.id', ondelete='CASCADE'), nullable=False, index=True),
-    Column('requirement_id', UUID(as_uuid=True), ForeignKey('requirements.id', ondelete='CASCADE'), nullable=False, index=True),
-    Column('modified_at', DateTime, nullable=False, default=datetime.utcnow),
-    UniqueConstraint('change_request_id', 'requirement_id', name='uq_cr_modifications_requirement'),
-)
-
-
-class ChangeRequest(Base):
-    """
-    Change Request model for gated updates to committed requirements (RAAS-COMP-068).
-
-    Change Requests gate updates to requirements that have passed review status.
-    This ensures traceability and controlled changes in production systems.
-
-    Lifecycle: draft -> review -> approved -> completed
-    """
-
-    __tablename__ = "change_requests"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    human_readable_id = Column(String(20), unique=True, nullable=True, index=True)  # e.g., CR-001
-
-    # Content - justification is required
-    justification = Column(Text, nullable=False)
-
-    # Requestor tracking
-    requestor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
-
-    # Status - lifecycle (stored as VARCHAR to match migration 019 schema)
-    # Using String instead of Enum because the database uses VARCHAR(20) with CHECK constraint
-    status = Column(
-        String(20),
-        nullable=False,
-        default=ChangeRequestStatus.DRAFT.value,
-        index=True
-    )
-
-    # Audit timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Approval tracking
-    approved_at = Column(DateTime)
-    approved_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-
-    # Completion tracking
-    completed_at = Column(DateTime)
-
-    # Cancellation tracking (TASK-030)
-    cancelled_at = Column(DateTime)
-
-    # Supersession tracking (TASK-030) - when CR is replaced by another
-    superseded_at = Column(DateTime)
-    superseded_by_id = Column(UUID(as_uuid=True), ForeignKey("change_requests.id", ondelete="SET NULL"))
-
-    # Relationships
-    organization = relationship("Organization")
-    requestor = relationship("User", foreign_keys=[requestor_id])
-    approved_by = relationship("User", foreign_keys=[approved_by_id])
-    superseded_by = relationship("ChangeRequest", remote_side="ChangeRequest.id", foreign_keys=[superseded_by_id])
-
-    # Affects list - declared scope of what CR intends to modify (immutable after review)
-    affects = relationship(
-        "Requirement",
-        secondary=change_request_affects,
-        backref="change_requests_affecting"
-    )
-
-    # Modified requirements - actual changes made using this CR (auto-populated)
-    modified_requirements = relationship(
-        "Requirement",
-        secondary=change_request_modifications,
-        backref="change_requests_modifying"
-    )
-
-    # Constraints
-    __table_args__ = (
-        CheckConstraint("length(justification) >= 10", name="cr_justification_min_length"),
-    )
-
-    @property
-    def affects_count(self) -> int:
-        """Count of requirements in declared scope."""
-        return len(self.affects) if self.affects else 0
-
-    @property
-    def modifications_count(self) -> int:
-        """Count of requirements actually modified."""
-        return len(self.modified_requirements) if self.modified_requirements else 0
-
-    def __repr__(self) -> str:
-        return f"<ChangeRequest {self.human_readable_id}: {self.status.value}>"
 
 
 # ============================================================================

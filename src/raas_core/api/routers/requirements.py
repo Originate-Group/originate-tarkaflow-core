@@ -364,7 +364,6 @@ def update_requirement(
     - **content**: New markdown content (optional)
     - **status**: New status (optional)
     - **tags**: New tags list (optional)
-    - **change_request_id**: Change request ID (required for requirements past review status)
     - **X-Persona**: Header declaring the workflow persona (developer, tester, etc.)
     """
     # Check requirement exists
@@ -391,37 +390,10 @@ def update_requirement(
                 detail=f"Invalid persona: {x_persona}. Valid personas: {', '.join(valid_personas)}"
             )
 
-    # Validate Change Request if requirement is past review status (RAAS-FEAT-078)
-    # Note: Status-only updates are exempt from CR requirement (governed by persona workflow)
-    validated_cr = None
-    try:
-        validated_cr = crud.validate_change_request_for_update(
-            db=db,
-            requirement_id=existing.id,
-            change_request_id=requirement_update.change_request_id,
-            organization_id=existing.organization_id,
-            update_data=requirement_update,
-        )
-    except ValueError as e:
-        error_message = str(e)
-        logger.warning(f"CR validation failed for requirement {requirement_id}: {error_message}")
-        # CR validation failures are 403 (forbidden without proper CR)
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "change_request_required",
-                "message": error_message
-            }
-        )
-
     try:
         requirement = crud.update_requirement(
             db, existing.id, requirement_update, user_id=user_id, persona=persona
         )
-
-        # Record CR modification if a CR was used (RAAS-REQ-091)
-        if validated_cr:
-            crud.record_change_request_modification(db, validated_cr, requirement)
 
         return requirement
     except ValueError as e:

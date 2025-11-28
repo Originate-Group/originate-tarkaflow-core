@@ -17,7 +17,6 @@ from .models import (
     GuardrailCategory,
     GuardrailStatus,
     EnforcementLevel,
-    ChangeRequestStatus,
     TaskType,
     TaskStatus,
     TaskPriority,
@@ -69,9 +68,6 @@ class RequirementUpdate(BaseModel):
 
     Note: title and description are READ-ONLY fields extracted from content.
     To update them, provide updated markdown content - do not update them directly.
-
-    IMPORTANT: For requirements in approved+ status, a change_request_id is required.
-    Draft and review status requirements can be updated without a CR.
     """
 
     content: Optional[str] = None  # Full markdown content (updates title/description when parsed)
@@ -79,7 +75,6 @@ class RequirementUpdate(BaseModel):
     tags: Optional[list[str]] = None
     depends_on: Optional[list[UUID]] = None  # Update dependencies
     adheres_to: Optional[list[str]] = None  # Update guardrail references
-    change_request_id: Optional[str] = Field(None, description="Change request UUID or human-readable ID (required for requirements past review status)")
     # Legacy fields - DEPRECATED and ignored
     title: Optional[str] = Field(None, min_length=1, max_length=200)
 
@@ -564,99 +559,6 @@ class GuardrailListResponse(BaseModel):
     """Schema for paginated guardrail list."""
 
     items: list[GuardrailListItem]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-
-
-# ============================================================================
-# Change Request Schemas (RAAS-COMP-068)
-# ============================================================================
-
-class ChangeRequestCreate(BaseModel):
-    """Schema for creating a new change request.
-
-    Change requests gate updates to requirements that have passed review status.
-    The 'affects' list declares which requirements this CR intends to modify.
-    """
-
-    organization_id: UUID = Field(..., description="Organization UUID")
-    justification: str = Field(..., min_length=10, description="Justification for the change (min 10 characters)")
-    affects: list[UUID] = Field(..., min_length=1, description="List of requirement UUIDs this CR will modify")
-
-
-class ChangeRequestTransition(BaseModel):
-    """Schema for transitioning a change request status."""
-
-    new_status: ChangeRequestStatus = Field(..., description="Target status (draft -> review -> approved -> completed -> cancelled/superseded)")
-    superseding_cr_id: Optional[str] = Field(None, description="UUID or HRID of superseding CR (required when new_status='superseded')")
-
-
-class ChangeRequestResponse(BaseModel):
-    """Schema for change request responses."""
-
-    id: UUID
-    human_readable_id: Optional[str] = None  # e.g., CR-001
-    organization_id: UUID
-    justification: str
-    status: ChangeRequestStatus
-
-    # Requestor
-    requestor_id: Optional[UUID] = None
-    requestor_email: Optional[str] = None
-
-    # Approval tracking
-    approved_at: Optional[datetime] = None
-    approved_by_id: Optional[UUID] = None
-    approved_by_email: Optional[str] = None
-
-    # Completion tracking
-    completed_at: Optional[datetime] = None
-
-    # Cancellation tracking (TASK-030)
-    cancelled_at: Optional[datetime] = None
-
-    # Supersession tracking (TASK-030)
-    superseded_at: Optional[datetime] = None
-    superseded_by_id: Optional[UUID] = None
-    superseded_by_hrid: Optional[str] = None  # e.g., CR-007
-
-    # Timestamps
-    created_at: datetime
-    updated_at: datetime
-
-    # Scope tracking
-    affects: list[UUID] = Field(default_factory=list, description="Requirements in declared scope")
-    affects_count: int = Field(description="Count of requirements in declared scope")
-    modifications_count: int = Field(description="Count of requirements actually modified")
-
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
-
-
-class ChangeRequestListItem(BaseModel):
-    """Schema for change request list items (lightweight)."""
-
-    id: UUID
-    human_readable_id: Optional[str] = None
-    organization_id: UUID
-    justification: str
-    status: ChangeRequestStatus
-    requestor_email: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    affects_count: int = Field(description="Count of requirements in declared scope")
-    modifications_count: int = Field(description="Count of requirements actually modified")
-    # Supersession tracking (TASK-030)
-    superseded_by_hrid: Optional[str] = None  # e.g., CR-007 if superseded
-
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
-
-
-class ChangeRequestListResponse(BaseModel):
-    """Schema for paginated change request list."""
-
-    items: list[ChangeRequestListItem]
     total: int
     page: int
     page_size: int
@@ -1413,6 +1315,61 @@ class RequirementVersionDiff(BaseModel):
     from_title: str
     to_title: str
     changes_summary: str  # Human-readable summary of changes
+
+
+# CR-002 (RAAS-FEAT-104): Work Item Diff and Conflict Detection Schemas
+class RequirementDiffItem(BaseModel):
+    """Single requirement diff within a Work Item."""
+
+    requirement_id: UUID
+    human_readable_id: Optional[str] = None
+    title: str
+    current_version_number: Optional[int] = None  # approved version
+    latest_version_number: Optional[int] = None  # most recent version
+    current_content: Optional[str] = None  # content at current_version
+    proposed_content: Optional[str] = None  # proposed content in Work Item (for CRs)
+    latest_content: Optional[str] = None  # content at latest version
+    has_changes: bool = False
+    changes_summary: str = ""
+
+
+class WorkItemDiffsResponse(BaseModel):
+    """Response for Work Item diffs endpoint (CR-002: RAAS-FEAT-104).
+
+    Shows diffs for all affected requirements in a single call.
+    """
+
+    work_item_id: UUID
+    human_readable_id: Optional[str] = None
+    work_item_type: str
+    affected_requirements: list[RequirementDiffItem]
+    total_affected: int
+    total_with_changes: int
+
+
+class ConflictItem(BaseModel):
+    """Conflict status for a single requirement."""
+
+    requirement_id: UUID
+    human_readable_id: Optional[str] = None
+    title: str
+    baseline_hash: Optional[str] = None  # hash when Work Item created
+    current_hash: Optional[str] = None  # current hash
+    has_conflict: bool = False
+    conflict_reason: Optional[str] = None
+
+
+class ConflictCheckResponse(BaseModel):
+    """Response for conflict check endpoint (CR-002: RAAS-FEAT-104).
+
+    Proactive conflict detection before approval/merge.
+    """
+
+    work_item_id: UUID
+    human_readable_id: Optional[str] = None
+    has_conflicts: bool = False
+    conflict_count: int = 0
+    affected_requirements: list[ConflictItem]
 
 
 # =============================================================================
