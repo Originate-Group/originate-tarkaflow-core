@@ -680,9 +680,10 @@ async def update_work_item(
                         detail=f"Cannot deploy {work_item.work_item_type.value.upper()} work items directly. "
                                f"Include '{work_item.human_readable_id}' in a Release first."
                     )
+                # Check if any containing Release is already deployed or completed (BUG-006 fix)
                 deployed_release = None
                 for release in work_item.included_in_releases:
-                    if release.status == WorkItemStatus.DEPLOYED:
+                    if release.status in [WorkItemStatus.DEPLOYED, WorkItemStatus.COMPLETED]:
                         deployed_release = release
                         break
                 if not deployed_release:
@@ -824,10 +825,10 @@ async def transition_work_item(
                     detail=f"Cannot deploy {work_item.work_item_type.value.upper()} work items directly. "
                            f"Include '{work_item.human_readable_id}' in a Release first."
                 )
-            # Check if any containing Release is already deployed
+            # Check if any containing Release is already deployed or completed (BUG-006 fix)
             deployed_release = None
             for release in work_item.included_in_releases:
-                if release.status == WorkItemStatus.DEPLOYED:
+                if release.status in [WorkItemStatus.DEPLOYED, WorkItemStatus.COMPLETED]:
                     deployed_release = release
                     break
             if not deployed_release:
