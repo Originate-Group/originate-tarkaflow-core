@@ -58,6 +58,7 @@ def list_my_agents(
 def check_agent_authorization(
     agent_email: str = Query(..., description="Agent email to check"),
     organization_id: UUID = Query(..., description="Organization UUID"),
+    user_agent: Optional[str] = Query(None, description="User-Agent header for client constraint checking"),
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(get_current_user_optional),
 ):
@@ -65,6 +66,10 @@ def check_agent_authorization(
     Check if current user is authorized to direct a specific agent.
 
     Used by MCP select_agent() to validate authorization before setting the agent.
+
+    CR-005/TARKA-FEAT-105: Supports client constraints via user_agent parameter.
+    If the agent-director mapping has allowed_user_agents and the provided
+    user_agent doesn't match, authorization is denied.
     """
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -80,9 +85,9 @@ def check_agent_authorization(
             }
         )
 
-    # Check authorization
-    is_authorized, auth_type = crud.check_agent_director_authorization(
-        db, current_user.id, agent_email, organization_id
+    # Check authorization (CR-005: now includes client constraint checking)
+    is_authorized, auth_type, allowed_user_agents = crud.check_agent_director_authorization(
+        db, current_user.id, agent_email, organization_id, user_agent=user_agent
     )
 
     if not is_authorized:
@@ -94,6 +99,23 @@ def check_agent_authorization(
                 detail={
                     "error": "agent_not_found",
                     "message": f"Agent '{agent_email}' not found",
+                }
+            )
+
+        # CR-005: Check if this is a client constraint rejection
+        if auth_type == "client_rejected":
+            patterns_str = ", ".join(allowed_user_agents) if allowed_user_agents else "none"
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "client_not_allowed",
+                    "message": f"Your client '{user_agent}' is not allowed to use agent '{agent_email}'. "
+                               f"Allowed clients: {patterns_str}",
+                    "agent_email": agent_email,
+                    "director_email": current_user.email,
+                    "client": user_agent,
+                    "allowed_user_agents": allowed_user_agents,
+                    "organization_id": str(organization_id),
                 }
             )
 
@@ -115,6 +137,7 @@ def check_agent_authorization(
         "director_id": str(current_user.id),
         "director_email": current_user.email,
         "organization_id": str(organization_id),
+        "allowed_user_agents": allowed_user_agents,
     }
 
 
@@ -184,6 +207,7 @@ def create_agent_director_mapping(
             director_id=data.director_id,
             organization_id=data.organization_id,
             created_by=current_user.id,
+            allowed_user_agents=data.allowed_user_agents,  # CR-005
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -204,6 +228,7 @@ def create_agent_director_mapping(
         organization_id=mapping.organization_id,
         created_at=mapping.created_at,
         created_by_email=creator.email if creator else None,
+        allowed_user_agents=mapping.allowed_user_agents,  # CR-005
     )
 
 
@@ -258,6 +283,7 @@ def list_agent_director_mappings(
             organization_id=mapping.organization_id,
             created_at=mapping.created_at,
             created_by_email=creator.email if creator else None,
+            allowed_user_agents=mapping.allowed_user_agents,  # CR-005
         ))
 
     return result

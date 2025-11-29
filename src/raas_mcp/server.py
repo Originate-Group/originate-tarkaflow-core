@@ -51,6 +51,9 @@ app = Server("raas-mcp")
 _session_project_scope: Optional[dict] = None  # Stores {project_id, name, slug, organization_id}
 _session_agent: Optional[str] = None  # Stores agent email (e.g., "developer@tarka.internal")
 _session_persona: Optional[str] = None  # Stores mapped role for backward compat
+# CR-005/TARKA-FEAT-105: Client identification for agent selection constraints
+# Format: "client-name/version" (e.g., "claude-desktop/1.2.3", "claude-code/0.1.0")
+_session_client_id: Optional[str] = os.getenv("RAAS_CLIENT_ID")  # Can be set via env or MCP init
 
 
 @app.list_tools()
@@ -211,7 +214,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
             # - dict with _agent key: agent scope change (CR-009)
             # - None: no change
             # - Same as current: no change
-            content, scope_update = await handler(arguments, client, _session_project_scope)
+            # CR-005: Pass client_id to select_agent for constraint checking
+            if name == "select_agent":
+                content, scope_update = await handler(arguments, client, _session_project_scope, _session_client_id)
+            else:
+                content, scope_update = await handler(arguments, client, _session_project_scope)
 
             # Update session scope if handler modified it
             if scope_update is not None and scope_update is not _session_project_scope:

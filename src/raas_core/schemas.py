@@ -436,6 +436,12 @@ class AgentDirectorCreate(BaseModel):
     agent_id: UUID = Field(..., description="UUID of the agent account")
     director_id: UUID = Field(..., description="UUID of the human user authorized to direct this agent")
     organization_id: UUID = Field(..., description="Organization UUID")
+    # CR-005/TARKA-FEAT-105: Client constraints
+    allowed_user_agents: Optional[List[str]] = Field(
+        None,
+        description="User-agent patterns that can use this mapping (e.g., ['claude-desktop/*']). "
+                    "Null/empty = unrestricted."
+    )
 
 
 class AgentDirectorResponse(BaseModel):
@@ -451,6 +457,11 @@ class AgentDirectorResponse(BaseModel):
     organization_id: UUID
     created_at: datetime
     created_by_email: Optional[str] = None
+    # CR-005/TARKA-FEAT-105: Client constraints
+    allowed_user_agents: Optional[List[str]] = Field(
+        None,
+        description="User-agent patterns that can use this mapping. Null/empty = unrestricted."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -463,6 +474,11 @@ class AgentResponse(BaseModel):
     full_name: Optional[str] = None
     is_authorized: bool = Field(description="Whether current user is authorized to direct this agent")
     authorization_type: Optional[str] = Field(None, description="'explicit' (mapping exists) or 'owner' (org owner implicit)")
+    # CR-005/TARKA-FEAT-105: Client constraints
+    allowed_user_agents: Optional[List[str]] = Field(
+        None,
+        description="User-agent patterns that can use this agent. Null/empty = unrestricted."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

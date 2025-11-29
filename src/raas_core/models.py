@@ -1204,6 +1204,10 @@ class AgentDirector(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True
     )
+    # Client constraints (CR-005/TARKA-FEAT-105)
+    # User-agent patterns that can use this mapping (prefix matching)
+    # Null/empty = unrestricted (all clients allowed)
+    allowed_user_agents = Column(ARRAY(String), nullable=True)
 
     # Relationships
     agent = relationship("User", foreign_keys=[agent_id])

@@ -540,17 +540,22 @@ AGENT_ROLE_MAP = {
 async def handle_select_agent(
     arguments: dict,
     client: httpx.AsyncClient,
-    current_scope: Optional[dict] = None
+    current_scope: Optional[dict] = None,
+    client_id: Optional[str] = None,
 ) -> tuple[list[TextContent], Optional[dict]]:
-    """Handle select_agent tool call (CR-009, CR-012).
+    """Handle select_agent tool call (CR-009, CR-012, CR-005).
 
     CR-012 adds authorization checking: directors must be explicitly authorized
     to use agents, or be organization owners (implicit authorization).
+
+    CR-005/TARKA-FEAT-105 adds client constraints: agent-director mappings can
+    restrict which MCP clients can use the agent via allowed_user_agents patterns.
 
     Args:
         arguments: Tool arguments containing agent_email and optional organization_id
         client: HTTP client for API calls
         current_scope: Current project scope (used to get organization_id if not provided)
+        client_id: MCP client identifier (e.g., "claude-code/0.1.0") for constraint checking
 
     Returns:
         Tuple of (response content, agent scope marker)
@@ -571,19 +576,39 @@ async def handle_select_agent(
         organization_id = current_scope["organization_id"]
 
     # CR-012: Check authorization if we have an organization context
+    # CR-005: Include client_id for client constraint checking
     auth_type = None
     if organization_id:
         try:
-            response = await client.get(
-                "/agents/check-authorization",
-                params={
-                    "agent_email": agent_email,
-                    "organization_id": str(organization_id),
-                }
-            )
+            params = {
+                "agent_email": agent_email,
+                "organization_id": str(organization_id),
+            }
+            # CR-005: Add user_agent for client constraint checking
+            if client_id:
+                params["user_agent"] = client_id
+
+            response = await client.get("/agents/check-authorization", params=params)
+
             if response.status_code == 403:
                 error_data = response.json().get("detail", {})
+                error_code = error_data.get("error", "agent_not_authorized")
                 error_msg = error_data.get("message", "Not authorized to use this agent")
+
+                # CR-005: Handle client constraint rejection differently
+                if error_code == "client_not_allowed":
+                    allowed = error_data.get("allowed_user_agents", [])
+                    allowed_str = ", ".join(allowed) if allowed else "none"
+                    return [TextContent(
+                        type="text",
+                        text=f"Client not allowed: {error_msg}\n\n"
+                             f"Agent: {agent_email}\n"
+                             f"Your client: {client_id or 'unknown'}\n"
+                             f"Allowed clients: {allowed_str}\n\n"
+                             f"This agent is restricted to specific MCP clients.\n"
+                             f"Use list_my_agents() to see which agents you can use from this client."
+                    )], {"_agent": None, "_persona": None}  # Clear agent on denial
+
                 # BUG-001 Fix 3: Clear stale agent state on authorization denial
                 # Don't preserve previous agent - explicit denial means no agent
                 return [TextContent(
@@ -750,6 +775,13 @@ async def handle_list_my_agents(
                 name = agent.get("full_name") or "No name"
                 lines.append(f"• **{agent['email']}** ({name})")
                 lines.append(f"  - Authorization: {auth_type}")
+                # CR-005: Show client constraints if any
+                allowed = agent.get("allowed_user_agents")
+                if allowed:
+                    allowed_str = ", ".join(allowed)
+                    lines.append(f"  - Allowed clients: {allowed_str}")
+                else:
+                    lines.append(f"  - Allowed clients: all (unrestricted)")
             lines.append("")
 
         if unauthorized_agents:

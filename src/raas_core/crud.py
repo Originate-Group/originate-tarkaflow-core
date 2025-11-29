@@ -3328,9 +3328,12 @@ def create_agent_director_mapping(
     director_id: UUID,
     organization_id: UUID,
     created_by: Optional[UUID] = None,
+    allowed_user_agents: Optional[list[str]] = None,
 ) -> models.AgentDirector:
     """
     Create an agent-director authorization mapping.
+
+    CR-005/TARKA-FEAT-105: Supports allowed_user_agents for client constraints
 
     Args:
         db: Database session
@@ -3338,6 +3341,7 @@ def create_agent_director_mapping(
         director_id: UUID of the human user to authorize
         organization_id: UUID of the organization
         created_by: UUID of the user creating the mapping
+        allowed_user_agents: Optional list of user-agent patterns (e.g., ["claude-desktop/*"])
 
     Returns:
         Created AgentDirector model
@@ -3383,6 +3387,7 @@ def create_agent_director_mapping(
         director_id=director_id,
         organization_id=organization_id,
         created_by=created_by,
+        allowed_user_agents=allowed_user_agents,
     )
 
     db.add(mapping)
