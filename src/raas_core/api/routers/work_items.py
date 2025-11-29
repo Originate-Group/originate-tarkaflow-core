@@ -1062,6 +1062,7 @@ async def get_requirement_version(
         id=version.id,
         requirement_id=version.requirement_id,
         version_number=version.version_number,
+        status=version.status,  # CR-006: Status lives on versions
         content=version.content,
         content_hash=version.content_hash,
         title=version.title,
