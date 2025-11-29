@@ -1,7 +1,7 @@
 [project]
-name = "raas-core"
+name = "tarka-core"
 version = "1.0.0"
-description = "RaaS Core - Shared requirements management engine"
+description = "Tarka Core - Shared requirements management engine"
 authors = [
     {name = "Wayne Kennedy", email = "wayne@weareoriginate.com"}
 ]
