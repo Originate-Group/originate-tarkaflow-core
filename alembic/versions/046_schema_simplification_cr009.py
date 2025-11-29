@@ -57,10 +57,10 @@ def upgrade() -> None:
         sa.Column('content_length', sa.Integer(), nullable=True, server_default='0')
     )
 
-    # Add quality_score column (using existing enum)
+    # Add quality_score column (using existing enum - note: PostgreSQL uses lowercase name)
     op.execute("""
         ALTER TABLE requirement_versions
-        ADD COLUMN quality_score quality_score DEFAULT 'OK'
+        ADD COLUMN quality_score qualityscore DEFAULT 'OK'
     """)
 
     # =========================================================================
@@ -149,10 +149,10 @@ def downgrade() -> None:
         ADD COLUMN status lifecycle_status DEFAULT 'draft'
     """)
 
-    # Restore quality_score using raw SQL (existing enum)
+    # Restore quality_score using raw SQL (existing enum - note: PostgreSQL uses lowercase name)
     op.execute("""
         ALTER TABLE requirements
-        ADD COLUMN quality_score quality_score DEFAULT 'OK'
+        ADD COLUMN quality_score qualityscore DEFAULT 'OK'
     """)
 
     # =========================================================================
