@@ -608,6 +608,18 @@ class Requirement(Base):
         v = self.resolve_version()
         return v.tags if v else []
 
+    @tags.setter
+    def tags(self, value: list) -> None:
+        """Set tags on the resolved version (BUG-011 fix).
+
+        Bidirectional tagging between Work Items and Requirements needs to
+        update requirement tags. After CR-009, tags live on RequirementVersion,
+        so this setter delegates to the resolved version.
+        """
+        v = self.resolve_version()
+        if v:
+            v.tags = value
+
     @property
     def adheres_to(self) -> list:
         """Get adheres_to from resolved version."""
