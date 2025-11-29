@@ -862,9 +862,12 @@ async def transition_work_item(
     work_item.updated_by_user_id = current_user.id
 
     # RAAS-FEAT-102: Release deployment cascade - deploy all included items when Release deploys
+    # TARKA-FEAT-106: Also mark affected requirements as deployed via this Release
     if data.new_status == WorkItemStatus.DEPLOYED and work_item.work_item_type == WorkItemType.RELEASE:
         db.refresh(work_item, ["included_work_items"])
+        deployed_requirements = set()  # Track to avoid duplicates across work items
         for included_wi in work_item.included_work_items:
+            # Transition validated work items to deployed
             if included_wi.status == WorkItemStatus.VALIDATED:
                 included_wi.status = WorkItemStatus.DEPLOYED
                 included_wi.updated_at = datetime.utcnow()
@@ -877,6 +880,16 @@ async def transition_work_item(
                     change_reason=f"Auto-deployed via Release {work_item.human_readable_id}",
                 )
                 logger.info(f"Auto-deployed {included_wi.human_readable_id} via Release {work_item.human_readable_id}")
+
+            # TARKA-FEAT-106: Mark affected requirements as deployed via this Release
+            # Only for work items that are now deployed (just transitioned or already deployed/completed)
+            if included_wi.status in [WorkItemStatus.DEPLOYED, WorkItemStatus.COMPLETED]:
+                db.refresh(included_wi, ["affected_requirements"])
+                for req in included_wi.affected_requirements:
+                    if req.id not in deployed_requirements:
+                        deployed_requirements.add(req.id)
+                        update_deployed_version_pointer(db, req, release_id=work_item.id)
+                        logger.info(f"Marked {req.human_readable_id} as deployed via Release {work_item.human_readable_id}")
 
     # Handle completion timestamps
     if data.new_status == WorkItemStatus.COMPLETED:
