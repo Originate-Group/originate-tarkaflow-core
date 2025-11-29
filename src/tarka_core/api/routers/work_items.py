@@ -231,10 +231,8 @@ def execute_cr_merge(db: Session, work_item: WorkItem, user_id: Optional[UUID]) 
         db.add(version)
         db.flush()  # Get the version ID
 
-        # Update requirement (CR-006: no current_version_id to update)
-        req.content = new_content
-        req.content_hash = new_hash
-        req.updated_at = datetime.utcnow()
+        # CR-009: Content now lives on RequirementVersion, no need to update Requirement
+        # The new version is automatically resolved via Requirement.resolve_version()
 
         created_versions.append(version)
         logger.info(f"Created version {next_version} for requirement {req.human_readable_id} from CR {work_item.human_readable_id}")
