@@ -396,7 +396,7 @@ class Project(Base):
 
     # Constraints
     __table_args__ = (
-        CheckConstraint("slug ~ '^[A-Z0-9]{3,4}$'", name="valid_project_slug"),
+        CheckConstraint("slug ~ '^[A-Z0-9]{3,10}$'", name="valid_project_slug"),
         UniqueConstraint("organization_id", "slug", name="unique_org_project_slug"),
     )
 

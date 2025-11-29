@@ -313,7 +313,7 @@ class ProjectBase(BaseModel):
     """Base schema for project fields."""
 
     name: str = Field(..., min_length=1, max_length=255)
-    slug: str = Field(..., min_length=3, max_length=4, pattern=r"^[A-Z0-9]{3,4}$")
+    slug: str = Field(..., min_length=3, max_length=10, pattern=r"^[A-Z0-9]{3,10}$")
     description: Optional[str] = None
     visibility: ProjectVisibility = ProjectVisibility.PUBLIC
     status: ProjectStatus = ProjectStatus.ACTIVE
