@@ -18,6 +18,60 @@ class MarkdownParseError(Exception):
     pass
 
 
+class ReservedTagError(Exception):
+    """Raised when user attempts to use a reserved status tag (TARKA-FEAT-106)."""
+    pass
+
+
+# TARKA-FEAT-106: Reserved tag prefixes that users cannot set
+# These are system-managed status indicators injected at read time
+RESERVED_TAG_PREFIXES = ("deployed-",)
+RESERVED_EXACT_TAGS = frozenset({"approved", "review", "draft", "deprecated"})
+
+
+def validate_tags_not_reserved(tags: list) -> None:
+    """Validate that user-provided tags don't use reserved status prefixes.
+
+    TARKA-FEAT-106: Status tags are system-managed and injected at read time.
+    Users cannot set tags that would conflict with status tag injection.
+
+    Reserved tags:
+    - deployed-* (e.g., deployed-v1, deployed-REL-001)
+    - approved
+    - review
+    - draft
+    - deprecated
+
+    Args:
+        tags: List of user-provided tags to validate
+
+    Raises:
+        ReservedTagError: If any tag uses a reserved prefix or exact match
+    """
+    if not tags:
+        return
+
+    for tag in tags:
+        tag_lower = tag.lower()
+
+        # Check exact reserved tags
+        if tag_lower in RESERVED_EXACT_TAGS:
+            raise ReservedTagError(
+                f"Tag '{tag}' is reserved for system-managed status. "
+                f"Status tags ({', '.join(sorted(RESERVED_EXACT_TAGS))}) are "
+                f"automatically injected based on requirement lifecycle state."
+            )
+
+        # Check reserved prefixes
+        for prefix in RESERVED_TAG_PREFIXES:
+            if tag_lower.startswith(prefix):
+                raise ReservedTagError(
+                    f"Tag '{tag}' uses reserved prefix '{prefix}'. "
+                    f"Tags starting with 'deployed-' are automatically injected "
+                    f"for requirements in production."
+                )
+
+
 def load_template(req_type: RequirementType) -> str:
     """Load the markdown template for a requirement type.
 
@@ -376,6 +430,7 @@ def inject_database_state(
     status: str,
     human_readable_id: Optional[str] = None,
     tags: Optional[list] = None,
+    status_tag: Optional[str] = None,
 ) -> str:
     """Inject current database state into frontmatter for retrieval.
 
@@ -386,11 +441,16 @@ def inject_database_state(
     BUG-004: Tags are now injected from database (not stored in content) to prevent
     tag changes from triggering versioning or status regression.
 
+    TARKA-FEAT-106: Status tag injection - a single read-only tag indicating
+    deployment state (deployed-v{N} or deployed-REL-XXX) or lifecycle status
+    (draft, review, approved, deprecated).
+
     Args:
         content: The stored markdown content (with only authored fields)
         status: Current lifecycle status from database
         human_readable_id: Human-readable ID from database (e.g., RAAS-FEAT-042)
         tags: Current tags from database (BUG-004: operational metadata)
+        status_tag: Computed status tag (TARKA-FEAT-106: e.g., deployed-v1, approved)
 
     Returns:
         Markdown content with complete frontmatter including current database state
@@ -409,6 +469,9 @@ def inject_database_state(
     # BUG-004: Inject tags from database (not stored in content)
     if tags is not None:
         frontmatter["tags"] = tags
+    # TARKA-FEAT-106: Inject status tag (deployment/lifecycle indicator)
+    if status_tag:
+        frontmatter["status_tag"] = status_tag
 
     # Convert any enum values to strings
     for key, value in frontmatter.items():

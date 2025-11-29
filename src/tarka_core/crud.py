@@ -15,7 +15,9 @@ from .markdown_utils import (
     merge_content,
     strip_system_fields_from_frontmatter,
     inject_database_state,
-    MarkdownParseError
+    MarkdownParseError,
+    validate_tags_not_reserved,
+    ReservedTagError,
 )
 from .quality import calculate_quality_score, is_content_length_valid_for_approval, get_length_validation_error
 from .state_machine import validate_transition, StateTransitionError, STATUS_SORT_ORDER
@@ -137,6 +139,13 @@ def create_requirement(
     parent_id = metadata["parent_id"]
     depends_on = metadata.get("depends_on", [])
     adheres_to = metadata.get("adheres_to", [])
+
+    # TARKA-FEAT-106: Validate tags don't use reserved status prefixes
+    try:
+        validate_tags_not_reserved(tags)
+    except ReservedTagError as e:
+        logger.warning(f"Reserved tag validation failed: {e}")
+        raise ValueError(str(e))
 
     # Validate parent-child type relationship (Epic > Component > Feature > Requirement)
     try:
@@ -689,6 +698,13 @@ def update_requirement(
                 needs_new_version = True
 
             if metadata.get("tags", []) != current_tags:
+                # TARKA-FEAT-106: Validate tags don't use reserved status prefixes
+                try:
+                    validate_tags_not_reserved(metadata.get("tags", []))
+                except ReservedTagError as e:
+                    logger.warning(f"Reserved tag validation failed: {e}")
+                    raise ValueError(str(e))
+
                 changes.append(("tags", str(current_tags), str(metadata.get("tags", []))))
                 new_tags = metadata.get("tags", [])
                 needs_new_version = True
@@ -765,6 +781,13 @@ def update_requirement(
 
         # Handle tags update
         if "tags" in update_data and update_data["tags"] != current_tags:
+            # TARKA-FEAT-106: Validate tags don't use reserved status prefixes
+            try:
+                validate_tags_not_reserved(update_data["tags"])
+            except ReservedTagError as e:
+                logger.warning(f"Reserved tag validation failed: {e}")
+                raise ValueError(str(e))
+
             changes.append(("tags", str(current_tags), str(update_data["tags"])))
             new_tags = update_data["tags"]
             needs_new_version = True

@@ -710,9 +710,10 @@ async def update_work_item(
                         change_reason=f"Auto-deployed via Release {work_item.human_readable_id}",
                     )
                     # BUG-013 fix: Mark affected requirements as deployed
+                    # TARKA-FEAT-106: Pass release_id for status tag tracking
                     db.refresh(included_wi, ["affected_requirements"])
                     for req in included_wi.affected_requirements:
-                        update_deployed_version_pointer(db, req)
+                        update_deployed_version_pointer(db, req, release_id=work_item.id)
                         logger.info(
                             f"Marked {req.human_readable_id} as deployed via "
                             f"{included_wi.human_readable_id} in Release {work_item.human_readable_id}"
@@ -744,10 +745,11 @@ async def update_work_item(
                         )
                         # BUG-013 fix: Ensure affected requirements are marked as deployed
                         # (safety net in case DEPLOYED cascade was skipped or failed)
+                        # TARKA-FEAT-106: Pass release_id for status tag tracking
                         db.refresh(included_wi, ["affected_requirements"])
                         for req in included_wi.affected_requirements:
                             if not req.deployed_version_id:
-                                update_deployed_version_pointer(db, req)
+                                update_deployed_version_pointer(db, req, release_id=work_item.id)
                                 logger.info(
                                     f"Marked {req.human_readable_id} as deployed via "
                                     f"{included_wi.human_readable_id} in Release {work_item.human_readable_id}"
@@ -1358,7 +1360,8 @@ async def backfill_release_deployments(
             db.refresh(included_wi, ["affected_requirements"])
             for req in included_wi.affected_requirements:
                 if not req.deployed_version_id:
-                    version = update_deployed_version_pointer(db, req)
+                    # TARKA-FEAT-106: Pass release_id for status tag tracking
+                    version = update_deployed_version_pointer(db, req, release_id=release.id)
                     if version:
                         # Create audit log entry
                         history_entry = RequirementHistory(

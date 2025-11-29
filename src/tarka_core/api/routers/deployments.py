@@ -307,7 +307,8 @@ async def transition_deployment(
             db.refresh(wi, ["affected_requirements"])
             for req in wi.affected_requirements:
                 if req.id not in [r.id for r in updated_reqs]:
-                    version = update_deployed_version_pointer(db, req)
+                    # TARKA-FEAT-106: Pass release_id for status tag tracking
+                    version = update_deployed_version_pointer(db, req, release_id=release.id)
                     if version:
                         updated_reqs.append(req)
                         logger.info(f"Updated deployed_version for {req.human_readable_id} to v{version.version_number}")

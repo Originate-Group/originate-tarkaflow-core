@@ -206,17 +206,20 @@ def update_deployed_version_pointer(
     db: Session,
     requirement: models.Requirement,
     version_id: Optional[UUID] = None,
+    release_id: Optional[UUID] = None,
 ) -> Optional[models.RequirementVersion]:
     """Update deployed_version_id to track production deployment.
 
     Called when a Release deploys to production.
 
     CR-006: Updated to use version resolution instead of current_version_id.
+    TARKA-FEAT-106: Added release_id tracking for status tag injection.
 
     Args:
         db: Database session
         requirement: The requirement being deployed
         version_id: Specific version to mark as deployed (defaults to resolved version)
+        release_id: UUID of the Release work item that deployed this version
 
     Returns the version that was set as deployed, or None if no version found.
     """
@@ -230,9 +233,13 @@ def update_deployed_version_pointer(
 
     if version:
         requirement.deployed_version_id = version.id
+        # TARKA-FEAT-106: Track which Release deployed this version
+        if release_id:
+            requirement.deployed_by_release_id = release_id
         logger.info(
             f"Updated deployed_version_id for {requirement.human_readable_id or requirement.id} "
             f"to version {version.version_number}"
+            f"{f' via Release {release_id}' if release_id else ''}"
         )
     return version
 
