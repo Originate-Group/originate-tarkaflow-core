@@ -105,9 +105,8 @@ class RequirementListItem(BaseModel):
     quality_score: QualityScore = Field(description="Quality score based on content length")
     child_count: int = Field(description="Number of direct children")
 
-    # Versioning fields (CR-002: RAAS-FEAT-097)
+    # Versioning fields (CR-006: Version Model Simplification)
     content_hash: Optional[str] = Field(None, description="SHA-256 hash of current content for conflict detection")
-    current_version_id: Optional[UUID] = Field(None, description="UUID of the approved/active version")
     deployed_version_id: Optional[UUID] = Field(None, description="UUID of the version deployed to production")
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
@@ -130,12 +129,11 @@ class RequirementResponse(RequirementBase):
     quality_score: QualityScore = Field(description="Quality score based on content length")
     child_count: int = Field(description="Number of direct children")
 
-    # Versioning fields (CR-002: RAAS-FEAT-097)
+    # Versioning fields (CR-006: Version Model Simplification)
     content_hash: Optional[str] = Field(None, description="SHA-256 hash of current content for conflict detection")
-    current_version_id: Optional[UUID] = Field(None, description="UUID of the approved/active version")
     deployed_version_id: Optional[UUID] = Field(None, description="UUID of the version deployed to production")
-    current_version_number: Optional[int] = Field(None, description="Version number of the current approved version")
-    has_pending_changes: bool = Field(False, description="True if newer versions exist beyond current_version_id")
+    deployed_version_number: Optional[int] = Field(None, description="Version number of the deployed version")
+    has_pending_changes: bool = Field(False, description="True if newer versions exist beyond deployed version")
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
@@ -1336,11 +1334,15 @@ class WorkItemHistoryResponse(BaseModel):
 
 
 class RequirementVersionResponse(BaseModel):
-    """Schema for Requirement Version response."""
+    """Schema for Requirement Version response.
+
+    CR-006: Versions now have their own status (draft/review/approved/deprecated).
+    """
 
     id: UUID
     requirement_id: UUID
     version_number: int
+    status: LifecycleStatus = Field(description="Version status (CR-006)")
     content: str
     content_hash: str
     title: str
@@ -1352,15 +1354,19 @@ class RequirementVersionResponse(BaseModel):
     created_by: Optional[UUID] = None
     created_by_email: Optional[str] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class RequirementVersionListItem(BaseModel):
-    """Schema for Requirement Version list items (lightweight, no content)."""
+    """Schema for Requirement Version list items (lightweight, no content).
+
+    CR-006: Versions now have their own status.
+    """
 
     id: UUID
     requirement_id: UUID
     version_number: int
+    status: LifecycleStatus = Field(description="Version status (CR-006)")
     content_hash: str
     title: str
     source_work_item_id: Optional[UUID] = None
@@ -1368,16 +1374,19 @@ class RequirementVersionListItem(BaseModel):
     created_at: datetime
     created_by_email: Optional[str] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class RequirementVersionListResponse(BaseModel):
-    """Schema for paginated Requirement Version list."""
+    """Schema for paginated Requirement Version list.
+
+    CR-006: Removed current_version_number, added deployed_version_number.
+    """
 
     items: list[RequirementVersionListItem]
     total: int
     requirement_id: UUID
-    current_version_number: Optional[int] = None
+    deployed_version_number: Optional[int] = None
 
 
 # =============================================================================
@@ -1404,13 +1413,14 @@ class DriftWarning(BaseModel):
     """Schema for a single drift warning.
 
     Indicates a requirement has newer versions than the targeted version.
+    CR-006: Renamed current_version to latest_version for clarity.
     """
 
     requirement_id: UUID
     requirement_human_readable_id: Optional[str] = None
     target_version: int = Field(description="Version number targeted by the work item")
-    current_version: int = Field(description="Current version number of the requirement")
-    versions_behind: int = Field(description="Number of versions behind current")
+    latest_version: int = Field(description="Latest version number of the requirement")
+    versions_behind: int = Field(description="Number of versions behind latest")
 
 
 class DriftCheckResponse(BaseModel):
@@ -1440,14 +1450,18 @@ class RequirementVersionDiff(BaseModel):
 
 # CR-002 (RAAS-FEAT-104): Work Item Diff and Conflict Detection Schemas
 class RequirementDiffItem(BaseModel):
-    """Single requirement diff within a Work Item."""
+    """Single requirement diff within a Work Item.
+
+    CR-006: Renamed current_version_number -> deployed_version_number.
+    The deployed version is the meaningful reference point for diffs.
+    """
 
     requirement_id: UUID
     human_readable_id: Optional[str] = None
     title: str
-    current_version_number: Optional[int] = None  # approved version
+    deployed_version_number: Optional[int] = None  # version in production
     latest_version_number: Optional[int] = None  # most recent version
-    current_content: Optional[str] = None  # content at current_version
+    deployed_content: Optional[str] = None  # content at deployed_version
     proposed_content: Optional[str] = None  # proposed content in Work Item (for CRs)
     latest_content: Optional[str] = None  # content at latest version
     has_changes: bool = False

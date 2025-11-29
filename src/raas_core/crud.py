@@ -41,9 +41,11 @@ from .persona_auth import (
 from .versioning import (
     compute_content_hash,
     create_requirement_version,
-    update_current_version_pointer,
     should_regress_to_draft,
     content_has_changed,
+    resolve_version,
+    get_status_tag,
+    get_latest_version,
 )
 
 logger = logging.getLogger("raas-api.crud")
@@ -634,28 +636,9 @@ def update_requirement(
                     )
                     raise ValueError(str(e))
 
-                # CR-002: Update current_version_id when transitioning to approved
-                if metadata["status"] == models.LifecycleStatus.APPROVED:
-                    old_version_id = db_requirement.current_version_id
-                    version = update_current_version_pointer(db, db_requirement)
-                    if version:
-                        logger.info(
-                            f"Updated current_version_id for {db_requirement.human_readable_id or db_requirement.id} "
-                            f"to version {version.version_number} on approval"
-                        )
-                        # CR-002 (RAAS-FEAT-104): Audit log for version pointer update
-                        _create_history_entry(
-                            db=db,
-                            requirement_id=requirement_id,
-                            change_type=models.ChangeType.VERSION_POINTER_CHANGED,
-                            field_name="current_version_id",
-                            old_value=str(old_version_id) if old_version_id else None,
-                            new_value=str(version.id),
-                            change_reason=f"Updated to version {version.version_number} on approval",
-                            user_id=user_id,
-                            director_id=director_id,
-                            actor_id=actor_id,
-                        )
+                # CR-006: Removed current_version_id update logic
+                # Status now lives on versions, not on requirements
+                # Version approval is handled by transitioning the version's status
 
             # Update all fields from markdown
             for field in ["title", "description", "status", "tags"]:
@@ -771,28 +754,9 @@ def update_requirement(
                 )
                 raise ValueError(str(e))
 
-            # CR-002: Update current_version_id when transitioning to approved
-            if update_data["status"] == models.LifecycleStatus.APPROVED:
-                old_version_id = db_requirement.current_version_id
-                version = update_current_version_pointer(db, db_requirement)
-                if version:
-                    logger.info(
-                        f"Updated current_version_id for {db_requirement.human_readable_id or db_requirement.id} "
-                        f"to version {version.version_number} on approval"
-                    )
-                    # CR-002 (RAAS-FEAT-104): Audit log for version pointer update
-                    _create_history_entry(
-                        db=db,
-                        requirement_id=requirement_id,
-                        change_type=models.ChangeType.VERSION_POINTER_CHANGED,
-                        field_name="current_version_id",
-                        old_value=str(old_version_id) if old_version_id else None,
-                        new_value=str(version.id),
-                        change_reason=f"Updated to version {version.version_number} on approval",
-                        user_id=user_id,
-                        director_id=director_id,
-                        actor_id=actor_id,
-                    )
+            # CR-006: Removed current_version_id update logic
+            # Status now lives on versions, not on requirements
+            # Version approval is handled by transitioning the version's status
 
         fields_to_update = {}
         for field, value in update_data.items():

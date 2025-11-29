@@ -1823,8 +1823,7 @@ def get_tools() -> list[Tool]:
             description="Get diff between two versions of a requirement. "
                        "\n\nRETURNS: Both versions' content for comparison, plus metadata."
                        "\n\nCOMMON PATTERNS:"
-                       "\n• Compare current_version vs latest: See pending changes awaiting approval"
-                       "\n• Compare deployed_version vs current: See what's approved but not yet deployed"
+                       "\n• Compare deployed_version vs latest: See pending changes not yet in production"
                        "\n• Compare any two versions: Historical audit",
             inputSchema={
                 "type": "object",
@@ -1840,10 +1839,10 @@ def get_tools() -> list[Tool]:
             name="mark_requirement_deployed",
             description="Mark a requirement's deployed_version_id to track production deployment. "
                        "\n\nCalled when a Release deploys to production. Updates deployed_version_id "
-                       "to either a specific version or the current approved version."
+                       "to either a specific version or the resolved version (CR-006)."
                        "\n\nPARAMETERS:"
                        "\n• requirement_id: UUID or human-readable ID"
-                       "\n• version_id: Optional specific version UUID (defaults to current_version_id)"
+                       "\n• version_id: Optional specific version UUID (defaults to resolved version)"
                        "\n\nRETURNS: Updated requirement with new deployed_version_id",
             inputSchema={
                 "type": "object",
@@ -1858,7 +1857,7 @@ def get_tools() -> list[Tool]:
             name="batch_mark_requirements_deployed",
             description="Batch mark multiple requirements as deployed. "
                        "\n\nUse when a Release deploys multiple requirements to production. "
-                       "Updates deployed_version_id to current_version_id for all specified requirements."
+                       "Updates deployed_version_id to resolved version for all specified requirements (CR-006)."
                        "\n\nRETURNS: Count of successfully updated requirements",
             inputSchema={
                 "type": "object",
@@ -1877,11 +1876,11 @@ def get_tools() -> list[Tool]:
             name="get_work_item_diffs",
             description="Get diffs for all affected requirements in a Work Item (CR-002: RAAS-FEAT-104). "
                        "\n\nFor CR review, shows actual content changes for each affected requirement. "
-                       "For CRs with proposed_content, shows diff between current_version and proposed. "
-                       "For other Work Items, shows diff between current_version and latest version."
+                       "For CRs with proposed_content, shows diff between deployed_version and proposed. "
+                       "For other Work Items, shows diff between deployed_version and latest version (CR-006)."
                        "\n\nUSE CASES:"
                        "\n• CR review: See exactly what will change when CR is merged"
-                       "\n• Implementation review: See changes since last approval"
+                       "\n• Implementation review: See changes since last deployment"
                        "\n\nRETURNS: Diff details for each affected requirement with content and change summary",
             inputSchema={
                 "type": "object",

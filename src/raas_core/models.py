@@ -189,12 +189,15 @@ class UserType(str, enum.Enum):
 
 
 class WorkItemType(str, enum.Enum):
-    """Work Item type enum for categorizing implementation work."""
+    """Work Item type enum for categorizing implementation work.
+
+    BUG-005: Removed 'task' type - it was never specified in any requirement
+    and creates confusion with the Task entity (RAAS-COMP-065).
+    """
 
     IR = "ir"           # Implementation Request - new feature work
     CR = "cr"           # Change Request - modifications to approved requirements
     BUG = "bug"         # Bug fix
-    TASK = "task"       # General task
     RELEASE = "release" # RAAS-FEAT-102: Release bundle for coordinated deployment
 
 
@@ -474,9 +477,13 @@ class Requirement(Base):
         index=True
     )
 
-    # Versioning (CR-010: RAAS-FEAT-097, CR-002)
+    # Versioning (CR-006: Version Model Simplification, TARKA-FEAT-106)
+    # CR-006: Removed current_version_id - the only meaningful pointer is deployed_version_id
+    # Version resolution at read time determines what content to return:
+    # 1. If deployed_version_id exists, return that version
+    # 2. Else if any approved versions exist, return the latest approved
+    # 3. Else return the latest version
     content_hash = Column(String(64), nullable=True)  # SHA-256 hex for conflict detection
-    current_version_id = Column(UUID(as_uuid=True), ForeignKey("requirement_versions.id", ondelete="SET NULL", use_alter=True), nullable=True)
     deployed_version_id = Column(UUID(as_uuid=True), ForeignKey("requirement_versions.id", ondelete="SET NULL", use_alter=True), nullable=True, index=True)
 
     # Multi-tenancy
@@ -497,9 +504,8 @@ class Requirement(Base):
     created_by_user = relationship("User", foreign_keys=[created_by_user_id], back_populates="created_requirements")
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id], back_populates="updated_requirements")
 
-    # Versioning relationships (CR-010: RAAS-FEAT-097, CR-002)
+    # Versioning relationships (CR-006: Version Model Simplification)
     versions = relationship("RequirementVersion", back_populates="requirement", foreign_keys="RequirementVersion.requirement_id", cascade="all, delete-orphan")
-    current_version = relationship("RequirementVersion", foreign_keys=[current_version_id], post_update=True)
     deployed_version = relationship("RequirementVersion", foreign_keys=[deployed_version_id], post_update=True)
 
     # Work Item relationships (CR-010: RAAS-COMP-075)
@@ -540,28 +546,28 @@ class Requirement(Base):
         return [dep.id for dep in self.dependencies] if self.dependencies else []
 
     @property
-    def current_version_number(self) -> Optional[int]:
-        """Get version number of the current approved version (CR-002)."""
-        if self.current_version:
-            return self.current_version.version_number
+    def deployed_version_number(self) -> Optional[int]:
+        """Get version number of the deployed version (CR-006)."""
+        if self.deployed_version:
+            return self.deployed_version.version_number
         return None
 
     @property
     def has_pending_changes(self) -> bool:
-        """Check if newer versions exist beyond current_version_id (CR-002).
+        """Check if newer versions exist beyond deployed_version_id (CR-006).
 
         Returns True if there are versions with higher version numbers
-        than the current approved version.
+        than the deployed version, or if deployed but latest is not deployed.
         """
         if not self.versions:
             return False
-        if not self.current_version_id:
-            # No approved version yet, any version is pending
+        if not self.deployed_version_id:
+            # Nothing deployed yet, any version could be considered pending
             return len(self.versions) > 0
 
-        current_num = self.current_version_number or 0
+        deployed_num = self.deployed_version_number or 0
         max_version = max(v.version_number for v in self.versions) if self.versions else 0
-        return max_version > current_num
+        return max_version > deployed_num
 
     def __repr__(self) -> str:
         return f"<Requirement {self.type.value}: {self.title}>"
@@ -1506,10 +1512,14 @@ class Deployment(Base):
 
 class RequirementVersion(Base):
     """
-    Immutable version snapshot of requirement content (CR-010: RAAS-FEAT-097).
+    Immutable version snapshot of requirement content (CR-006: Version Model Simplification).
 
     Every content change creates a new version record. Versions are immutable
     and linked to the Work Item (CR) that caused the change.
+
+    CR-006: Each version now has its own status (draft/review/approved/deprecated).
+    This enables multiple approved versions to exist for different Work Items,
+    eliminating the need for the ambiguous current_version_id pointer.
     """
 
     __tablename__ = "requirement_versions"
@@ -1524,6 +1534,15 @@ class RequirementVersion(Base):
 
     # Version tracking
     version_number = Column(Integer, nullable=False)
+
+    # CR-006: Status lives on versions, not on requirements
+    # This allows multiple approved versions for different Work Items
+    status = Column(
+        Enum(LifecycleStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=LifecycleStatus.DRAFT,
+        index=True
+    )
 
     # Content snapshot (immutable)
     content = Column(Text, nullable=False)

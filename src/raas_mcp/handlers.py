@@ -2023,8 +2023,9 @@ async def handle_list_requirement_versions(
         return [TextContent(type="text", text=f"No versions found for requirement {requirement_id}")], current_scope
 
     versions_text = "\n\n".join([formatters.format_requirement_version(v) for v in result['items']])
-    current_info = f"\nCurrent approved version: v{result['current_version_number']}" if result.get('current_version_number') else ""
-    text = f"**Versions for {requirement_id}** ({result['total']} total){current_info}\n\n{versions_text}"
+    # CR-006: Changed from current_version_number to deployed_version_number
+    deployed_info = f"\nDeployed version: v{result['deployed_version_number']}" if result.get('deployed_version_number') else ""
+    text = f"**Versions for {requirement_id}** ({result['total']} total){deployed_info}\n\n{versions_text}"
 
     return [TextContent(type="text", text=text)], current_scope
 
@@ -2150,7 +2151,8 @@ async def handle_get_work_item_diffs(
         status_marker = "**CHANGED**" if has_changes else "no changes"
         text_lines.append(f"### [{hrid}] {title}")
         text_lines.append(f"Status: {status_marker}")
-        text_lines.append(f"Current version: {req.get('current_version_number', 'N/A')}")
+        # CR-006: Changed from current_version_number to deployed_version_number
+        text_lines.append(f"Deployed version: {req.get('deployed_version_number', 'N/A')}")
         text_lines.append(f"Latest version: {req.get('latest_version_number', 'N/A')}")
         if changes_summary:
             text_lines.append(f"Summary: {changes_summary}")
@@ -2234,12 +2236,13 @@ async def handle_check_work_item_drift(
     for warning in drift_warnings:
         req_hrid = warning.get('requirement_human_readable_id', str(warning.get('requirement_id', 'unknown')))
         target_v = warning.get('target_version', 1)
-        current_v = warning.get('current_version', 1)
+        # CR-006: Renamed from current_version to latest_version
+        latest_v = warning.get('latest_version', 1)
         versions_behind = warning.get('versions_behind', 0)
 
         text_lines.append(f"### DRIFT: {req_hrid}")
         text_lines.append(f"- Targeting: v{target_v}")
-        text_lines.append(f"- Current: v{current_v}")
+        text_lines.append(f"- Latest: v{latest_v}")
         text_lines.append(f"- Versions behind: {versions_behind}")
         text_lines.append("")
 

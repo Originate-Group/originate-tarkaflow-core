@@ -53,6 +53,7 @@ from ...work_item_state_machine import (
 from ...versioning import (
     compute_content_hash,
     update_deployed_version_pointer,
+    resolve_version,
 )
 from ..database import get_db
 from ..dependencies import get_current_user_optional
@@ -160,8 +161,8 @@ def execute_cr_merge(db: Session, work_item: WorkItem, user_id: Optional[UUID]) 
 
     When a CR Work Item transitions to COMPLETED:
     1. Validate baseline hashes match current requirement content
-    2. Create new RequirementVersion for each affected requirement
-    3. Update requirement content and current_version pointer
+    2. Create new RequirementVersion for each affected requirement with approved status
+    3. Update requirement content (CR-006: no current_version_id to update)
     4. Remove CR tag from requirements
 
     Returns list of created versions.
@@ -212,11 +213,12 @@ def execute_cr_merge(db: Session, work_item: WorkItem, user_id: Optional[UUID]) 
         ).scalar() or 0
         next_version = max_version + 1
 
-        # Create new version
+        # Create new version with approved status (CR-006: status on versions)
         new_hash = compute_content_hash(new_content)
         version = RequirementVersion(
             requirement_id=req.id,
             version_number=next_version,
+            status=LifecycleStatus.APPROVED,  # CR-006: CR merge creates approved version
             content=new_content,
             content_hash=new_hash,
             title=req.title,  # Will be updated below
@@ -228,10 +230,9 @@ def execute_cr_merge(db: Session, work_item: WorkItem, user_id: Optional[UUID]) 
         db.add(version)
         db.flush()  # Get the version ID
 
-        # Update requirement
+        # Update requirement (CR-006: no current_version_id to update)
         req.content = new_content
         req.content_hash = new_hash
-        req.current_version_id = version.id
         req.updated_at = datetime.utcnow()
 
         created_versions.append(version)
@@ -433,14 +434,11 @@ async def create_work_item(
                 )
             target_versions.append(version)
     else:
-        # Auto-capture current versions from affected requirements
+        # Auto-capture resolved versions from affected requirements (CR-006)
         for req in affected_reqs:
-            if req.current_version_id:
-                current_version = db.query(RequirementVersion).filter(
-                    RequirementVersion.id == req.current_version_id
-                ).first()
-                if current_version:
-                    target_versions.append(current_version)
+            resolved = resolve_version(db, req)
+            if resolved:
+                target_versions.append(resolved)
 
     work_item.target_versions = target_versions
 
@@ -1001,6 +999,7 @@ async def list_requirement_versions(
             id=v.id,
             requirement_id=v.requirement_id,
             version_number=v.version_number,
+            status=v.status,  # CR-006: versions have status
             content_hash=v.content_hash,
             title=v.title,
             source_work_item_id=v.source_work_item_id,
@@ -1009,20 +1008,20 @@ async def list_requirement_versions(
             created_by_email=created_by_email,
         ))
 
-    # Get current version number
-    current_version_num = None
-    if req.current_version_id:
-        current_ver = db.query(RequirementVersion).filter(
-            RequirementVersion.id == req.current_version_id
+    # Get deployed version number (CR-006: replaced current_version_number)
+    deployed_version_num = None
+    if req.deployed_version_id:
+        deployed_ver = db.query(RequirementVersion).filter(
+            RequirementVersion.id == req.deployed_version_id
         ).first()
-        if current_ver:
-            current_version_num = current_ver.version_number
+        if deployed_ver:
+            deployed_version_num = deployed_ver.version_number
 
     return RequirementVersionListResponse(
         items=items,
         total=len(items),
         requirement_id=req_uuid,
-        current_version_number=current_version_num,
+        deployed_version_number=deployed_version_num,
     )
 
 
@@ -1145,7 +1144,7 @@ async def mark_requirement_deployed(
     requirement_id: str,
     version_id: Optional[UUID] = Query(
         None,
-        description="Specific version to mark as deployed (defaults to current_version)"
+        description="Specific version to mark as deployed (defaults to resolved version per CR-006)"
     ),
     db: Session = Depends(get_db),
 ):
@@ -1154,9 +1153,12 @@ async def mark_requirement_deployed(
     Updates deployed_version_id to track which version is in production.
     This is typically called when a Release deploys to production.
 
+    CR-006: Uses version resolution (deployed -> latest approved -> latest)
+    instead of current_version_id.
+
     Args:
         requirement_id: UUID or human-readable ID of the requirement
-        version_id: Optional specific version to mark (defaults to current_version)
+        version_id: Optional specific version to mark (defaults to resolved version)
 
     Returns:
         Dict with requirement_id, deployed_version details
@@ -1224,7 +1226,8 @@ async def batch_mark_deployed(
     """Batch mark multiple requirements as deployed (CR-002: RAAS-FEAT-104).
 
     Typically called when a Release deploys multiple requirements to production.
-    Uses each requirement's current_version_id as the deployed version.
+    CR-006: Uses version resolution (deployed -> latest approved -> latest)
+    instead of current_version_id.
 
     Args:
         requirement_ids: List of requirement identifiers
@@ -1316,10 +1319,10 @@ async def get_work_item_diffs(
     For CR review, shows actual content changes for each affected requirement.
 
     For CRs with proposed_content:
-    - Shows diff between current_version content and proposed content
+    - Shows diff between deployed_version content and proposed content (CR-006)
 
     For other Work Items:
-    - Shows diff between current_version and latest version (if different)
+    - Shows diff between deployed_version and latest version (if different)
 
     Returns:
         WorkItemDiffsResponse with diff details for each affected requirement
@@ -1338,17 +1341,17 @@ async def get_work_item_diffs(
     total_with_changes = 0
 
     for req in work_item.affected_requirements:
-        # Get current version (approved)
-        current_version = None
-        current_content = None
-        current_version_num = None
-        if req.current_version_id:
-            current_version = db.query(RequirementVersion).filter(
-                RequirementVersion.id == req.current_version_id
+        # Get deployed version (CR-006: replaced current_version)
+        deployed_version = None
+        deployed_content = None
+        deployed_version_num = None
+        if req.deployed_version_id:
+            deployed_version = db.query(RequirementVersion).filter(
+                RequirementVersion.id == req.deployed_version_id
             ).first()
-            if current_version:
-                current_content = current_version.content
-                current_version_num = current_version.version_number
+            if deployed_version:
+                deployed_content = deployed_version.content
+                deployed_version_num = deployed_version.version_number
 
         # Get latest version
         latest_version = db.query(RequirementVersion).filter(
@@ -1371,14 +1374,14 @@ async def get_work_item_diffs(
         changes_summary = ""
 
         if proposed_content:
-            # For CRs, compare current to proposed
-            if current_content != proposed_content:
+            # For CRs, compare deployed to proposed
+            if deployed_content != proposed_content:
                 has_changes = True
                 changes_summary = "Proposed changes pending"
-        elif current_version_num and latest_version_num and current_version_num != latest_version_num:
-            # For non-CRs, compare current to latest
+        elif deployed_version_num and latest_version_num and deployed_version_num != latest_version_num:
+            # For non-CRs, compare deployed to latest
             has_changes = True
-            changes_summary = f"Version {current_version_num} -> {latest_version_num}"
+            changes_summary = f"Version {deployed_version_num} -> {latest_version_num}"
 
         if has_changes:
             total_with_changes += 1
@@ -1387,9 +1390,9 @@ async def get_work_item_diffs(
             requirement_id=req.id,
             human_readable_id=req.human_readable_id,
             title=req.title,
-            current_version_number=current_version_num,
+            deployed_version_number=deployed_version_num,
             latest_version_number=latest_version_num,
-            current_content=current_content,
+            deployed_content=deployed_content,
             proposed_content=proposed_content,
             latest_content=latest_content,
             has_changes=has_changes,
@@ -1514,25 +1517,22 @@ async def check_work_item_drift(
         if not req:
             continue
 
-        # Get current version number from the requirement
-        current_version_num = 1
-        if req.current_version_id:
-            current_version = db.query(RequirementVersion).filter(
-                RequirementVersion.id == req.current_version_id
-            ).first()
-            if current_version:
-                current_version_num = current_version.version_number
+        # Get latest version number (CR-006: compare against latest, not current_version_id)
+        latest_version = db.query(RequirementVersion).filter(
+            RequirementVersion.requirement_id == req.id
+        ).order_by(RequirementVersion.version_number.desc()).first()
+        latest_version_num = latest_version.version_number if latest_version else 1
 
         target_version_num = target_version.version_number
 
-        # Check for drift (current > target means spec has evolved)
-        if current_version_num > target_version_num:
+        # Check for drift (latest > target means spec has evolved)
+        if latest_version_num > target_version_num:
             drift_warnings.append(DriftWarning(
                 requirement_id=req.id,
                 requirement_human_readable_id=req.human_readable_id,
                 target_version=target_version_num,
-                current_version=current_version_num,
-                versions_behind=current_version_num - target_version_num,
+                latest_version=latest_version_num,  # CR-006: renamed from current_version
+                versions_behind=latest_version_num - target_version_num,
             ))
 
     return DriftCheckResponse(

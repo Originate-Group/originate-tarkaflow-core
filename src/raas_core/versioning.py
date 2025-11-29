@@ -1,14 +1,16 @@
-"""Requirement versioning utilities (CR-002: RAAS-FEAT-097).
+"""Requirement versioning utilities (CR-006: Version Model Simplification).
 
 Implements git-like immutable versioning where every content change creates a new
-RequirementVersion record. Versions are pure snapshots without their own status.
-The Requirement's status (draft -> review -> approved) controls the approval workflow.
+RequirementVersion record. Each version has its own status (draft/review/approved/deprecated).
 
-Key concepts:
-- current_version_id: Points to the approved/active specification
-- deployed_version_id: Points to what's actually in production
-- Modifying approved content regresses status to draft
-- On approval transition, current_version_id updates to latest version
+Key concepts (CR-006):
+- deployed_version_id: Points to what's actually in production (the only pointer on Requirement)
+- Status lives on versions, not on requirements
+- Version resolution at read time determines what content to return:
+  1. If deployed_version_id exists, return that version
+  2. Else if any approved versions exist, return the latest approved
+  3. Else return the latest version
+- Modifying approved content regresses status to draft on the requirement (for display)
 """
 import hashlib
 import logging
@@ -50,24 +52,28 @@ def create_requirement_version(
     db: Session,
     requirement: models.Requirement,
     content: str,
+    status: models.LifecycleStatus = models.LifecycleStatus.DRAFT,
     user_id: Optional[UUID] = None,
     source_work_item_id: Optional[UUID] = None,
     change_reason: Optional[str] = None,
 ) -> models.RequirementVersion:
     """Create a new immutable version snapshot of a requirement.
 
+    CR-006: Versions now have their own status. The status parameter defaults
+    to DRAFT but should be set to the requirement's current status when creating
+    a version from an existing requirement.
+
     This function:
     1. Computes content hash for conflict detection
     2. Determines next version number
-    3. Creates RequirementVersion record
+    3. Creates RequirementVersion record with status
     4. Updates requirement's content_hash
-
-    Does NOT update current_version_id - that happens on approval transition.
 
     Args:
         db: Database session
         requirement: The requirement being versioned
         content: The content to snapshot
+        status: Status for this version (CR-006)
         user_id: User making the change
         source_work_item_id: Work Item (CR/IR) that caused this version
         change_reason: Human-readable reason for the change
@@ -81,6 +87,7 @@ def create_requirement_version(
     version = models.RequirementVersion(
         requirement_id=requirement.id,
         version_number=version_number,
+        status=status,  # CR-006: Status lives on versions
         content=content,
         content_hash=content_hash,
         title=requirement.title,
@@ -97,7 +104,7 @@ def create_requirement_version(
     requirement.content_hash = content_hash
 
     logger.info(
-        f"Created version {version_number} for requirement "
+        f"Created version {version_number} (status={status.value}) for requirement "
         f"{requirement.human_readable_id or requirement.id}"
         f"{f' from work item {source_work_item_id}' if source_work_item_id else ''}"
     )
@@ -117,24 +124,63 @@ def get_latest_version(db: Session, requirement_id: UUID) -> Optional[models.Req
     ).first()
 
 
-def update_current_version_pointer(
+def get_latest_approved_version(db: Session, requirement_id: UUID) -> Optional[models.RequirementVersion]:
+    """Get the most recent approved version of a requirement.
+
+    CR-006: Returns the latest version with status='approved'.
+    Returns None if no approved versions exist.
+    """
+    return db.query(models.RequirementVersion).filter(
+        models.RequirementVersion.requirement_id == requirement_id,
+        models.RequirementVersion.status == models.LifecycleStatus.APPROVED
+    ).order_by(
+        models.RequirementVersion.version_number.desc()
+    ).first()
+
+
+def resolve_version(
     db: Session,
     requirement: models.Requirement,
+    version_number: Optional[int] = None,
 ) -> Optional[models.RequirementVersion]:
-    """Update current_version_id to point to the latest version.
+    """Resolve which version to return for a requirement (TARKA-FEAT-106).
 
-    Called when a requirement transitions to 'approved' status.
+    Version Resolution Rules:
+    1. If version_number is specified, return that specific version
+    2. If deployed_version_id exists, return that version
+    3. Else if any approved versions exist, return the latest approved
+    4. Else return the latest version (v1 draft for new requirements)
 
-    Returns the version that was set as current, or None if no versions exist.
+    Args:
+        db: Database session
+        requirement: The requirement to resolve version for
+        version_number: Optional explicit version number to return
+
+    Returns:
+        The resolved RequirementVersion, or None if no versions exist
     """
-    latest = get_latest_version(db, requirement.id)
-    if latest:
-        requirement.current_version_id = latest.id
-        logger.info(
-            f"Updated current_version_id for {requirement.human_readable_id or requirement.id} "
-            f"to version {latest.version_number}"
-        )
-    return latest
+    # Explicit version override
+    if version_number is not None:
+        return db.query(models.RequirementVersion).filter(
+            models.RequirementVersion.requirement_id == requirement.id,
+            models.RequirementVersion.version_number == version_number
+        ).first()
+
+    # 1. If deployed_version_id exists, return that version
+    if requirement.deployed_version_id:
+        version = db.query(models.RequirementVersion).filter(
+            models.RequirementVersion.id == requirement.deployed_version_id
+        ).first()
+        if version:
+            return version
+
+    # 2. Else if any approved versions exist, return the latest approved
+    approved = get_latest_approved_version(db, requirement.id)
+    if approved:
+        return approved
+
+    # 3. Else return the latest version
+    return get_latest_version(db, requirement.id)
 
 
 def update_deployed_version_pointer(
@@ -146,10 +192,12 @@ def update_deployed_version_pointer(
 
     Called when a Release deploys to production.
 
+    CR-006: Updated to use version resolution instead of current_version_id.
+
     Args:
         db: Database session
         requirement: The requirement being deployed
-        version_id: Specific version to mark as deployed (defaults to current_version_id)
+        version_id: Specific version to mark as deployed (defaults to resolved version)
 
     Returns the version that was set as deployed, or None if no version found.
     """
@@ -157,12 +205,9 @@ def update_deployed_version_pointer(
         version = db.query(models.RequirementVersion).filter(
             models.RequirementVersion.id == version_id
         ).first()
-    elif requirement.current_version_id:
-        version = db.query(models.RequirementVersion).filter(
-            models.RequirementVersion.id == requirement.current_version_id
-        ).first()
     else:
-        version = get_latest_version(db, requirement.id)
+        # CR-006: Use version resolution instead of current_version_id
+        version = resolve_version(db, requirement)
 
     if version:
         requirement.deployed_version_id = version.id
@@ -199,3 +244,56 @@ def content_has_changed(old_content: Optional[str], new_content: str) -> bool:
     old_hash = compute_content_hash(old_content)
     new_hash = compute_content_hash(new_content)
     return old_hash != new_hash
+
+
+def get_status_tag(
+    requirement: models.Requirement,
+    version: Optional[models.RequirementVersion] = None,
+    release_hrid: Optional[str] = None,
+) -> str:
+    """Get the status tag to inject for a requirement version (TARKA-FEAT-106).
+
+    Status tag injection rules (precedence order):
+    1. deployed-REL-XXX - This version is in production via the specified Release
+    2. deprecated - This requirement has been retired
+    3. approved - Approved but not yet in a deployed Release
+    4. review - Under review
+    5. draft - Work in progress
+
+    Key principle: deployed-REL-XXX supersedes approved because deployment implies approval.
+
+    Args:
+        requirement: The requirement
+        version: The resolved version (if available)
+        release_hrid: Human-readable ID of the Release that deployed this (if deployed)
+
+    Returns:
+        The status tag string to inject
+    """
+    # Check if this is the deployed version
+    if version and requirement.deployed_version_id == version.id:
+        if release_hrid:
+            return f"deployed-{release_hrid}"
+        else:
+            return f"deployed-v{version.version_number}"
+
+    # Check the version's status (CR-006: status lives on versions)
+    if version:
+        if version.status == models.LifecycleStatus.DEPRECATED:
+            return "deprecated"
+        elif version.status == models.LifecycleStatus.APPROVED:
+            return "approved"
+        elif version.status == models.LifecycleStatus.REVIEW:
+            return "review"
+        else:
+            return "draft"
+
+    # Fallback to requirement status if no version
+    if requirement.status == models.LifecycleStatus.DEPRECATED:
+        return "deprecated"
+    elif requirement.status == models.LifecycleStatus.APPROVED:
+        return "approved"
+    elif requirement.status == models.LifecycleStatus.REVIEW:
+        return "review"
+    else:
+        return "draft"
