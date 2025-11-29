@@ -430,7 +430,6 @@ def inject_database_state(
     status: str,
     human_readable_id: Optional[str] = None,
     tags: Optional[list] = None,
-    status_tag: Optional[str] = None,
 ) -> str:
     """Inject current database state into frontmatter for retrieval.
 
@@ -441,16 +440,15 @@ def inject_database_state(
     BUG-004: Tags are now injected from database (not stored in content) to prevent
     tag changes from triggering versioning or status regression.
 
-    TARKA-FEAT-106: Status tag injection - a single read-only tag indicating
-    deployment state (deployed-v{N} or deployed-REL-XXX) or lifecycle status
-    (draft, review, approved, deprecated).
+    TARKA-FEAT-106: Status injection - the status parameter may be either a
+    lifecycle status (draft, review, approved, deprecated) OR a deployment
+    status (deployed-REL-XXX) when the requirement is deployed via a Release.
 
     Args:
         content: The stored markdown content (with only authored fields)
-        status: Current lifecycle status from database
+        status: Effective status - either lifecycle status or 'deployed-REL-XXX'
         human_readable_id: Human-readable ID from database (e.g., RAAS-FEAT-042)
         tags: Current tags from database (BUG-004: operational metadata)
-        status_tag: Computed status tag (TARKA-FEAT-106: e.g., deployed-v1, approved)
 
     Returns:
         Markdown content with complete frontmatter including current database state
@@ -463,15 +461,13 @@ def inject_database_state(
     body = parsed["body"]
 
     # Inject current database state
+    # TARKA-FEAT-106: status may be 'deployed-REL-XXX' when deployed
     frontmatter["status"] = status
     if human_readable_id:
         frontmatter["human_readable_id"] = human_readable_id
     # BUG-004: Inject tags from database (not stored in content)
     if tags is not None:
         frontmatter["tags"] = tags
-    # TARKA-FEAT-106: Inject status tag (deployment/lifecycle indicator)
-    if status_tag:
-        frontmatter["status_tag"] = status_tag
 
     # Convert any enum values to strings
     for key, value in frontmatter.items():

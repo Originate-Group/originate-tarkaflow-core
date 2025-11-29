@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_serializer
 
 from .models import (
     RequirementType,
@@ -108,11 +108,9 @@ class RequirementListItem(BaseModel):
     # Versioning fields (CR-006: Version Model Simplification)
     content_hash: Optional[str] = Field(None, description="SHA-256 hash of current content for conflict detection")
     deployed_version_id: Optional[UUID] = Field(None, description="UUID of the version deployed to production")
-    # TARKA-FEAT-106: Release tracking for status tag
+    # TARKA-FEAT-106: Release tracking for status injection
     deployed_by_release_id: Optional[UUID] = Field(None, description="UUID of the Release that deployed this version")
-
-    # Status tag (TARKA-FEAT-106: Status Tag Injection)
-    status_tag: Optional[str] = Field(None, description="Computed status tag: deployed-REL-XXX, deployed-v{N}, approved, review, draft, or deprecated")
+    deployed_by_release_hrid: Optional[str] = Field(None, description="Human-readable ID of the Release (e.g., REL-001)")
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
@@ -139,13 +137,27 @@ class RequirementResponse(RequirementBase):
     deployed_version_id: Optional[UUID] = Field(None, description="UUID of the version deployed to production")
     deployed_version_number: Optional[int] = Field(None, description="Version number of the deployed version")
     has_pending_changes: bool = Field(False, description="True if newer versions exist beyond deployed version")
-    # TARKA-FEAT-106: Release tracking for status tag
+    # TARKA-FEAT-106: Release tracking for status injection
     deployed_by_release_id: Optional[UUID] = Field(None, description="UUID of the Release that deployed this version")
-
-    # Status tag (TARKA-FEAT-106: Status Tag Injection)
-    status_tag: Optional[str] = Field(None, description="Computed status tag: deployed-REL-XXX, deployed-v{N}, approved, review, draft, or deprecated")
+    deployed_by_release_hrid: Optional[str] = Field(None, description="Human-readable ID of the Release (e.g., REL-001)")
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+    def _compute_effective_status(self) -> str:
+        """Compute the effective status for display (TARKA-FEAT-106).
+
+        Status tag injection rules:
+        - If deployed with a Release: status becomes 'deployed-REL-XXX'
+        - Otherwise: use the lifecycle status (draft, review, approved, deprecated)
+
+        The deployed status supersedes 'approved' because deployment implies approval.
+        """
+        # If deployed and we have the Release HRID, use deployed-REL-XXX format
+        if self.deployed_version_id is not None and self.deployed_by_release_hrid:
+            return f"deployed-{self.deployed_by_release_hrid}"
+
+        # Otherwise use the lifecycle status
+        return self.status.value if hasattr(self.status, 'value') else str(self.status)
 
     @model_validator(mode='after')
     def inject_database_state_into_content(self):
@@ -153,43 +165,42 @@ class RequirementResponse(RequirementBase):
 
         The stored content only contains authored fields (type, title, parent_id,
         depends_on, adheres_to). System-managed fields (status, human_readable_id,
-        tags, status_tag) are dynamically injected from database columns when returning to clients.
+        tags) are dynamically injected from database columns when returning to clients.
 
         BUG-004: Tags are now injected from database (not stored in content) to prevent
         tag changes from triggering versioning or status regression.
 
-        TARKA-FEAT-106: Status tag injection - computes and injects a single status tag
-        indicating deployment state or lifecycle status.
+        TARKA-FEAT-106: Status injection - the status field is overridden to show
+        'deployed-REL-XXX' when the requirement is deployed via a Release.
 
         This ensures clients always see the current authoritative state, not stale
         values from stored frontmatter.
         """
-        # TARKA-FEAT-106: Compute status_tag
-        # If deployed_version_id is set, we're viewing the deployed version
-        # (because resolve_version() returns deployed version when set)
-        if self.deployed_version_id is not None and self.deployed_version_number is not None:
-            # TODO: Once Release tracking is implemented, use deployed-REL-XXX format
-            self.status_tag = f"deployed-v{self.deployed_version_number}"
-        else:
-            # Use lifecycle status as status_tag
-            status_value = self.status.value if hasattr(self.status, 'value') else str(self.status)
-            self.status_tag = status_value
-
         if self.content:
             from .markdown_utils import inject_database_state
             try:
+                # TARKA-FEAT-106: Use effective status (deployed-REL-XXX or lifecycle status)
+                effective_status = self._compute_effective_status()
                 self.content = inject_database_state(
                     self.content,
-                    self.status.value if hasattr(self.status, 'value') else str(self.status),
+                    effective_status,
                     self.human_readable_id,
                     self.tags,  # BUG-004: Inject tags from database
-                    self.status_tag,  # TARKA-FEAT-106: Inject status tag
                 )
             except Exception:
                 # If injection fails, return content as-is
                 # (This can happen with old/malformed content)
                 pass
         return self
+
+    @field_serializer('status')
+    def serialize_status(self, value: LifecycleStatus) -> str:
+        """Serialize status with deployment override (TARKA-FEAT-106).
+
+        When a requirement is deployed via a Release, the status field
+        is overridden to 'deployed-REL-XXX' instead of 'approved'.
+        """
+        return self._compute_effective_status()
 
 
 class RequirementWithChildren(RequirementResponse):

@@ -549,6 +549,13 @@ class Requirement(Base):
         max_version = max(v.version_number for v in self.versions) if self.versions else 0
         return max_version > deployed_num
 
+    @property
+    def deployed_by_release_hrid(self) -> Optional[str]:
+        """Get human-readable ID of the Release that deployed this version (TARKA-FEAT-106)."""
+        if self.deployed_by_release:
+            return self.deployed_by_release.human_readable_id
+        return None
+
     def __repr__(self) -> str:
         # Get title from resolved version for display
         resolved = self.resolve_version()
