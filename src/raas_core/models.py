@@ -305,16 +305,8 @@ class User(Base):
 
     # Relationships
     memberships = relationship("OrganizationMember", back_populates="user", cascade="all, delete-orphan")
-    created_requirements = relationship(
-        "Requirement",
-        foreign_keys="Requirement.created_by_user_id",
-        back_populates="created_by_user"
-    )
-    updated_requirements = relationship(
-        "Requirement",
-        foreign_keys="Requirement.updated_by_user_id",
-        back_populates="updated_by_user"
-    )
+    # CR-009: created_requirements and updated_requirements removed
+    # Audit trail now lives on RequirementVersion (v1.created_by_user_id, etc.)
 
     def __repr__(self) -> str:
         return f"<User {self.email} ({self.auth_provider})>"
@@ -442,67 +434,51 @@ class ProjectMember(Base):
 
 class Requirement(Base):
     """
-    Requirement model for all hierarchy levels.
+    Requirement model - minimal shell for hierarchy and scoping (CR-009).
 
-    Uses single-table inheritance with type discriminator.
+    CR-009: Schema simplification - all content and metadata fields now live
+    on RequirementVersion. This table holds only structural/identity fields.
+
+    The 7 remaining fields:
+    - id: Primary key
+    - human_readable_id: e.g., RAAS-FEAT-042
+    - type: epic | component | feature | requirement
+    - parent_id: Hierarchy reference
+    - organization_id: Multi-tenancy scope
+    - project_id: Project scope
+    - deployed_version_id: What's in production (CR-006)
+
+    All content access goes through version resolution:
+    1. If deployed_version_id exists, return that version
+    2. Else if any approved versions exist, return the latest approved
+    3. Else return the latest version (v1 for new requirements)
     """
 
     __tablename__ = "requirements"
 
+    # Identity
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    human_readable_id = Column(String(20), unique=True, nullable=True, index=True)  # e.g., RAAS-FEAT-042
+
+    # Hierarchy
     type = Column(Enum(RequirementType, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     parent_id = Column(
         UUID(as_uuid=True), ForeignKey("requirements.id", ondelete="CASCADE"), index=True
     )
 
-    # Core fields
-    title = Column(String(200), nullable=False)
-    description = Column(String(500))  # Auto-extracted from content
-    content = Column(Text)  # Full markdown content with frontmatter
-    human_readable_id = Column(String(20), unique=True, nullable=True, index=True)  # e.g., RAAS-FEAT-042
-    status = Column(
-        Enum(LifecycleStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=LifecycleStatus.DRAFT, index=True
-    )
-
-    # Metadata
-    tags = Column(ARRAY(String), default=[])
-    adheres_to = Column(ARRAY(String), default=[])  # Guardrail identifiers (UUID or human-readable)
-
-    # Quality tracking
-    content_length = Column(Integer, nullable=False, default=0)
-    quality_score = Column(
-        Enum(QualityScore, values_callable=lambda x: [e.value for e in x]),
-        nullable=False,
-        default=QualityScore.OK,
-        index=True
-    )
-
-    # Versioning (CR-006: Version Model Simplification, TARKA-FEAT-106)
-    # CR-006: Removed current_version_id - the only meaningful pointer is deployed_version_id
-    # Version resolution at read time determines what content to return:
-    # 1. If deployed_version_id exists, return that version
-    # 2. Else if any approved versions exist, return the latest approved
-    # 3. Else return the latest version
-    content_hash = Column(String(64), nullable=True)  # SHA-256 hex for conflict detection
-    deployed_version_id = Column(UUID(as_uuid=True), ForeignKey("requirement_versions.id", ondelete="SET NULL", use_alter=True), nullable=True, index=True)
-
     # Multi-tenancy
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Audit fields
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    # Versioning (CR-006: Version Model Simplification)
+    # The only pointer: what's deployed to production
+    deployed_version_id = Column(UUID(as_uuid=True), ForeignKey("requirement_versions.id", ondelete="SET NULL", use_alter=True), nullable=True, index=True)
 
     # Relationships
     parent = relationship("Requirement", remote_side=[id], backref="children")
     history = relationship("RequirementHistory", back_populates="requirement", cascade="all, delete-orphan")
     organization = relationship("Organization", back_populates="requirements")
     project = relationship("Project", back_populates="requirements")
-    created_by_user = relationship("User", foreign_keys=[created_by_user_id], back_populates="created_requirements")
-    updated_by_user = relationship("User", foreign_keys=[updated_by_user_id], back_populates="updated_requirements")
 
     # Versioning relationships (CR-006: Version Model Simplification)
     versions = relationship("RequirementVersion", back_populates="requirement", foreign_keys="RequirementVersion.requirement_id", cascade="all, delete-orphan")
@@ -570,7 +546,119 @@ class Requirement(Base):
         return max_version > deployed_num
 
     def __repr__(self) -> str:
-        return f"<Requirement {self.type.value}: {self.title}>"
+        # Get title from resolved version for display
+        resolved = self.resolve_version()
+        title = resolved.title if resolved else "(no versions)"
+        return f"<Requirement {self.type.value}: {title}>"
+
+    def resolve_version(self) -> Optional["RequirementVersion"]:
+        """Resolve which version to use for content (CR-006, CR-009).
+
+        Resolution order:
+        1. deployed_version_id if set
+        2. Latest approved version
+        3. Latest version (v1 for new requirements)
+        """
+        if self.deployed_version:
+            return self.deployed_version
+
+        if not self.versions:
+            return None
+
+        # Find latest approved
+        approved = [v for v in self.versions if v.status == LifecycleStatus.APPROVED]
+        if approved:
+            return max(approved, key=lambda v: v.version_number)
+
+        # Fallback to latest
+        return max(self.versions, key=lambda v: v.version_number)
+
+    # =========================================================================
+    # CR-009: Content field properties (delegate to resolved version)
+    # These provide API compatibility - all content lives on versions now
+    # =========================================================================
+
+    @property
+    def title(self) -> str:
+        """Get title from resolved version."""
+        v = self.resolve_version()
+        return v.title if v else "(no version)"
+
+    @property
+    def description(self) -> Optional[str]:
+        """Get description from resolved version."""
+        v = self.resolve_version()
+        return v.description if v else None
+
+    @property
+    def content(self) -> Optional[str]:
+        """Get content from resolved version."""
+        v = self.resolve_version()
+        return v.content if v else None
+
+    @property
+    def status(self) -> LifecycleStatus:
+        """Get status from resolved version."""
+        v = self.resolve_version()
+        return v.status if v else LifecycleStatus.DRAFT
+
+    @property
+    def tags(self) -> list:
+        """Get tags from resolved version."""
+        v = self.resolve_version()
+        return v.tags if v else []
+
+    @property
+    def adheres_to(self) -> list:
+        """Get adheres_to from resolved version."""
+        v = self.resolve_version()
+        return v.adheres_to if v else []
+
+    @property
+    def content_length(self) -> int:
+        """Get content_length from resolved version."""
+        v = self.resolve_version()
+        return v.content_length if v else 0
+
+    @property
+    def quality_score(self) -> QualityScore:
+        """Get quality_score from resolved version."""
+        v = self.resolve_version()
+        return v.quality_score if v else QualityScore.OK
+
+    @property
+    def content_hash(self) -> Optional[str]:
+        """Get content_hash from resolved version."""
+        v = self.resolve_version()
+        return v.content_hash if v else None
+
+    @property
+    def created_at(self) -> Optional[datetime]:
+        """Get created_at from first version (v1)."""
+        if not self.versions:
+            return None
+        v1 = min(self.versions, key=lambda v: v.version_number)
+        return v1.created_at
+
+    @property
+    def updated_at(self) -> Optional[datetime]:
+        """Get updated_at from latest version."""
+        v = self.resolve_version()
+        return v.created_at if v else None
+
+    @property
+    def created_by_user_id(self) -> Optional[UUID]:
+        """Get created_by_user_id from first version (v1)."""
+        if not self.versions:
+            return None
+        v1 = min(self.versions, key=lambda v: v.version_number)
+        return v1.created_by_user_id
+
+    @property
+    def updated_by_user_id(self) -> Optional[UUID]:
+        """Get updated_by_user_id from latest version."""
+        v = self.resolve_version()
+        return v.created_by_user_id if v else None
 
 
 class ChangeType(str, enum.Enum):
@@ -1512,7 +1600,7 @@ class Deployment(Base):
 
 class RequirementVersion(Base):
     """
-    Immutable version snapshot of requirement content (CR-006: Version Model Simplification).
+    Immutable version snapshot of requirement content (CR-006, CR-009).
 
     Every content change creates a new version record. Versions are immutable
     and linked to the Work Item (CR) that caused the change.
@@ -1520,6 +1608,10 @@ class RequirementVersion(Base):
     CR-006: Each version now has its own status (draft/review/approved/deprecated).
     This enables multiple approved versions to exist for different Work Items,
     eliminating the need for the ambiguous current_version_id pointer.
+
+    CR-009: All content and metadata fields now live on versions, not requirements.
+    The Requirement table is now a minimal shell (7 fields) while versions hold
+    all content: title, description, content, status, tags, adheres_to, quality metrics.
     """
 
     __tablename__ = "requirement_versions"
@@ -1551,6 +1643,18 @@ class RequirementVersion(Base):
     # Title and description snapshot (for quick reference)
     title = Column(String(200), nullable=False)
     description = Column(String(500), nullable=True)
+
+    # CR-009: Metadata fields moved from Requirement
+    tags = Column(ARRAY(String), nullable=False, default=[])
+    adheres_to = Column(ARRAY(String), nullable=False, default=[])  # Guardrail identifiers
+
+    # CR-009: Quality tracking moved from Requirement
+    content_length = Column(Integer, nullable=False, default=0)
+    quality_score = Column(
+        Enum(QualityScore, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=QualityScore.OK
+    )
 
     # Source tracking - what caused this version
     source_work_item_id = Column(

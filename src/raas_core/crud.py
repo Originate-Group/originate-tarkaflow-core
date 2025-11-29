@@ -51,15 +51,21 @@ from .versioning import (
 logger = logging.getLogger("raas-api.crud")
 
 
-def _status_sort_expression():
-    """Build SQLAlchemy CASE expression for status-based sorting.
+def _type_sort_expression():
+    """Build SQLAlchemy CASE expression for type-based sorting.
 
-    Returns a CASE expression that maps status to sort order,
-    with in_progress first and draft last.
+    CR-009: Status no longer exists on Requirement (lives on versions).
+    Sort by type hierarchy: epic > component > feature > requirement.
     """
+    type_order = {
+        models.RequirementType.EPIC: 1,
+        models.RequirementType.COMPONENT: 2,
+        models.RequirementType.FEATURE: 3,
+        models.RequirementType.REQUIREMENT: 4,
+    }
     return case(
-        *[(models.Requirement.status == status, order)
-          for status, order in STATUS_SORT_ORDER.items()],
+        *[(models.Requirement.type == req_type, order)
+          for req_type, order in type_order.items()],
         else_=99
     )
 
@@ -199,9 +205,8 @@ def create_requirement(
     # This prevents desync when database state changes (e.g., status transitions)
     cleaned_content = strip_system_fields_from_frontmatter(requirement.content)
 
-    # Calculate content length and quality score
+    # Calculate content length for validation
     content_length = len(cleaned_content) if cleaned_content else 0
-    quality_score = calculate_quality_score(content_length, requirement.type)
 
     # Validate content length for status review/approved
     if status in [models.LifecycleStatus.REVIEW, models.LifecycleStatus.APPROVED]:
@@ -211,21 +216,14 @@ def create_requirement(
             raise ValueError(error_msg)
 
     try:
+        # CR-009: Requirement is now a minimal shell (7 fields only)
+        # All content lives on RequirementVersion
         db_requirement = models.Requirement(
             type=requirement.type,
             parent_id=parent_id,
-            title=title,
-            description=description,
-            content=cleaned_content,
-            status=status,
-            tags=tags,
-            adheres_to=adheres_to,
-            content_length=content_length,
-            quality_score=quality_score,
             organization_id=organization_id,
             project_id=resolved_project_id,
-            created_by_user_id=user_id,
-            updated_by_user_id=user_id,
+            # deployed_version_id is NULL for new requirements
         )
         db.add(db_requirement)
         db.flush()  # Flush to get the ID before validating dependencies and guardrails
@@ -256,7 +254,7 @@ def create_requirement(
                     )
                 )
 
-        # Validate guardrail references
+        # Validate guardrail references (they'll be stored on the version)
         if adheres_to:
             for guardrail_id in adheres_to:
                 guardrail = get_guardrail(db, guardrail_id, organization_id)
@@ -265,25 +263,29 @@ def create_requirement(
                     db.rollback()
                     raise ValueError(f"Invalid guardrail reference '{guardrail_id}': guardrail not found or not in same organization")
 
-        db.commit()
-        db.refresh(db_requirement)
-        logger.debug(f"Database: Created requirement {db_requirement.id} in org {organization_id}")
-    except SQLAlchemyError as e:
-        logger.error(f"Database error creating requirement: {e}", exc_info=True)
-        db.rollback()
-        raise
-
-    # CR-002: Create initial version (v1) for new requirements
-    if cleaned_content:
+        # CR-009: Create initial version (v1) with all content and metadata
+        # The version holds: content, title, description, status, tags, adheres_to,
+        # content_length, quality_score
         create_requirement_version(
             db=db,
             requirement=db_requirement,
             content=cleaned_content,
+            title=title,
+            description=description,
+            status=status,
+            tags=tags,
+            adheres_to=adheres_to,
             user_id=user_id,
             change_reason="Initial creation",
         )
+
         db.commit()
-        logger.debug(f"Created initial version v1 for requirement {db_requirement.id}")
+        db.refresh(db_requirement)
+        logger.debug(f"Database: Created requirement {db_requirement.id} with v1 in org {organization_id}")
+    except SQLAlchemyError as e:
+        logger.error(f"Database error creating requirement: {e}", exc_info=True)
+        db.rollback()
+        raise
 
     # Create history entry (BUG-003: include director/actor for audit trail)
     _create_history_entry(
@@ -389,7 +391,46 @@ def get_requirements(
     Returns:
         Tuple of (requirements list, total count)
     """
-    query = db.query(models.Requirement)
+    # CR-009: For filtering on version fields (status, title, tags, quality_score),
+    # we need to join with the resolved version. Create a subquery to find each
+    # requirement's resolved version (deployed > latest approved > latest).
+    from sqlalchemy import func as sqla_func, literal
+
+    # Subquery to get the resolved version ID for each requirement
+    # Priority: deployed_version_id > latest approved > latest
+    resolved_version_subq = (
+        db.query(
+            models.RequirementVersion.id.label('resolved_id'),
+            models.RequirementVersion.requirement_id,
+        )
+        .filter(models.RequirementVersion.requirement_id == models.Requirement.id)
+        .order_by(
+            # Prefer deployed version (via deployed_version_id match)
+            case(
+                (models.RequirementVersion.id == models.Requirement.deployed_version_id, 0),
+                else_=1
+            ),
+            # Then prefer approved status
+            case(
+                (models.RequirementVersion.status == models.LifecycleStatus.APPROVED, 0),
+                else_=1
+            ),
+            # Then by version number descending
+            models.RequirementVersion.version_number.desc()
+        )
+        .limit(1)
+        .correlate(models.Requirement)
+        .scalar_subquery()
+    )
+
+    # Main query with join to resolved version for filtering
+    query = (
+        db.query(models.Requirement)
+        .join(
+            models.RequirementVersion,
+            models.RequirementVersion.id == resolved_version_subq
+        )
+    )
 
     # Apply organization filter (required for multi-user)
     if organization_ids:
@@ -399,11 +440,13 @@ def get_requirements(
     if type_filter:
         query = query.filter(models.Requirement.type == type_filter)
 
+    # CR-009: Filter on resolved version's status
     if status_filter:
-        query = query.filter(models.Requirement.status == status_filter)
+        query = query.filter(models.RequirementVersion.status == status_filter)
 
+    # CR-009: Filter on resolved version's quality_score
     if quality_score_filter:
-        query = query.filter(models.Requirement.quality_score == quality_score_filter)
+        query = query.filter(models.RequirementVersion.quality_score == quality_score_filter)
 
     if parent_id is not None:
         query = query.filter(models.Requirement.parent_id == parent_id)
@@ -411,28 +454,29 @@ def get_requirements(
     if project_id:
         query = query.filter(models.Requirement.project_id == project_id)
 
+    # CR-009: Search in resolved version's title and description
     if search:
         search_pattern = f"%{search}%"
         query = query.filter(
             or_(
-                models.Requirement.title.ilike(search_pattern),
-                models.Requirement.description.ilike(search_pattern),
+                models.RequirementVersion.title.ilike(search_pattern),
+                models.RequirementVersion.description.ilike(search_pattern),
             )
         )
 
+    # CR-009: Filter on resolved version's tags
     if tags:
         # PostgreSQL array contains operator (@>) - requirement must have ALL specified tags
-        # Cast the tags list to PostgreSQL text[] array type to match the column type
-        query = query.filter(models.Requirement.tags.op('@>')(cast(tags, ARRAY(Text))))
+        query = query.filter(models.RequirementVersion.tags.op('@>')(cast(tags, ARRAY(Text))))
 
     # CR-004 Phase 4: DEPLOYED status removed. Filter by deployed_version_id instead.
     # include_deployed=False excludes requirements that have been deployed to production
     if not include_deployed:
         query = query.filter(models.Requirement.deployed_version_id.is_(None))
 
-    # Exclude deprecated items by default unless explicitly requested (RAAS-FEAT-080)
+    # CR-009: Exclude deprecated items by filtering on resolved version's status
     if not include_deprecated:
-        query = query.filter(models.Requirement.status != models.LifecycleStatus.DEPRECATED)
+        query = query.filter(models.RequirementVersion.status != models.LifecycleStatus.DEPRECATED)
 
     # Filter by blocked_by (requirements that depend on a specific requirement)
     if blocked_by:
@@ -447,7 +491,8 @@ def get_requirements(
     # Apply pagination and ordering
     # Order by status priority (in_progress first, draft last), then by created_at
     requirements = (
-        query.order_by(_status_sort_expression(), models.Requirement.created_at.desc())
+        # CR-009: Sort by type hierarchy and human_readable_id
+        query.order_by(_type_sort_expression(), models.Requirement.human_readable_id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -492,20 +537,25 @@ def update_requirement(
     actor_id: Optional[UUID] = None,
 ) -> Optional[models.Requirement]:
     """
-    Update a requirement.
+    Update a requirement (CR-009 refactored).
 
-    If content (markdown) is provided, it will be used as the source of truth
-    and metadata will be extracted from it. Otherwise, individual fields will
-    be updated and the markdown content will be updated accordingly.
+    CR-009: All content and metadata now live on RequirementVersion.
+    Updates create new versions; the Requirement shell only holds:
+    - parent_id (hierarchy)
+    - dependencies (via junction table)
+    - deployed_version_id (what's in production)
+
+    If content (markdown) is provided, it will be parsed and a new version created.
+    Status-only or tag-only updates also create new versions.
 
     Args:
         db: Database session
         requirement_id: Requirement UUID
         requirement_update: Update data
         user_id: User UUID (who is making the update)
-        persona: Declared workflow persona for authorization (optional for now)
-        director_id: CR-002 (RAAS-FEAT-063) - Human user who authorized the change
-        actor_id: CR-002 (RAAS-FEAT-063) - Agent account that executed the change
+        persona: Declared workflow persona for authorization
+        director_id: CR-002 - Human user who authorized the change
+        actor_id: CR-002 - Agent account that executed the change
 
     Returns:
         Updated requirement or None if not found
@@ -518,41 +568,48 @@ def update_requirement(
         return None
 
     # Check permissions (RAAS-FEAT-048: Permission Validation & Enforcement)
-    if user_id:  # Only check permissions if user_id is provided (not solo mode)
+    if user_id:
         try:
             can_update_requirement(db, user_id, requirement_id)
         except PermissionDeniedError as e:
             logger.warning(f"Permission denied for user {user_id} updating requirement {requirement_id}: {e.message}")
             raise ValueError(e.message)
 
-    # Update the updated_by_user_id
-    db_requirement.updated_by_user_id = user_id
-
     # Track changes for history
     changes = []
     update_data = requirement_update.model_dump(exclude_unset=True)
-    new_dependencies = None  # Track dependency updates
-    new_adheres_to = None  # Track guardrail reference updates
+    new_dependencies = None
+    new_adheres_to = None
+
+    # CR-009: Get current values from resolved version for comparison
+    current_version = db_requirement.resolve_version()
+    current_title = current_version.title if current_version else ""
+    current_description = current_version.description if current_version else None
+    current_status = current_version.status if current_version else models.LifecycleStatus.DRAFT
+    current_tags = current_version.tags if current_version else []
+    current_adheres_to = current_version.adheres_to if current_version else []
+    current_content = current_version.content if current_version else ""
+
+    # Values for the new version (start with current, update as needed)
+    new_title = current_title
+    new_description = current_description
+    new_status = current_status
+    new_tags = current_tags
+    new_content = current_content
+    version_adheres_to = current_adheres_to
+    needs_new_version = False
 
     # If markdown content is provided, parse it and extract metadata
     if "content" in update_data and update_data["content"]:
-        # BUG-001 Fix 2: Check if content is actually changing (not just status via frontmatter)
-        # Only enforce content-edit authorization if the actual spec content is being modified
-        # BUG-004: Strip system fields from both old and new before comparing
-        # This ensures tag/status changes don't incorrectly trigger content-edit authorization
-        new_content = update_data["content"]
+        new_raw_content = update_data["content"]
         try:
-            cleaned_new = strip_system_fields_from_frontmatter(new_content)
-            old_content = db_requirement.content or ""
-            cleaned_old = strip_system_fields_from_frontmatter(old_content) if old_content else ""
+            cleaned_new = strip_system_fields_from_frontmatter(new_raw_content)
+            cleaned_old = strip_system_fields_from_frontmatter(current_content) if current_content else ""
         except MarkdownParseError:
-            # If parsing fails, fall back to raw comparison
-            cleaned_new = new_content
-            cleaned_old = db_requirement.content or ""
+            cleaned_new = new_raw_content
+            cleaned_old = current_content or ""
+
         if content_has_changed(cleaned_old, cleaned_new):
-            # Content is actually changing - check persona authorization
-            # Note: require_persona=False for backward compatibility during rollout
-            # TODO: Change to require_persona=True once all clients are updated
             try:
                 validate_content_edit_authorization(persona, require_persona=False)
             except ContentEditAuthorizationError as e:
@@ -569,241 +626,186 @@ def update_requirement(
             # Extract guardrail references from metadata
             if "adheres_to" in metadata:
                 new_adheres_to = metadata["adheres_to"]
+                version_adheres_to = new_adheres_to
 
-            # Validate parent_id change (if parent_id is in metadata and is changing)
+            # Validate parent_id change (parent_id still lives on Requirement)
             if "parent_id" in metadata and metadata["parent_id"] != db_requirement.parent_id:
                 try:
                     validate_parent_type(db, db_requirement.type, metadata["parent_id"])
                 except HierarchyValidationError as e:
                     logger.warning(f"Hierarchy validation failed on update: {e.message}")
                     raise ValueError(e.message)
-                # Track parent_id change
                 changes.append(("parent_id", str(db_requirement.parent_id), str(metadata["parent_id"])))
                 db_requirement.parent_id = metadata["parent_id"]
 
             # Validate status transition if status is changing
-            if "status" in metadata and metadata["status"] != db_requirement.status:
-                # CR-004 Phase 4: DEPLOYED status removed from requirements.
-                # Deployment tracking is via deployed_version_id, not status.
-                # State machine will reject any invalid status transitions.
-
+            if "status" in metadata and metadata["status"] != current_status:
                 try:
-                    validate_transition(db_requirement.status, metadata["status"])
+                    validate_transition(current_status, metadata["status"])
                 except StateTransitionError as e:
                     logger.warning(f"State transition blocked: {e}")
-                    # Log failed transition attempt to audit trail (CR-002: director/actor)
                     _create_history_entry(
-                        db=db,
-                        requirement_id=requirement_id,
+                        db=db, requirement_id=requirement_id,
                         change_type=models.ChangeType.STATUS_CHANGED,
                         field_name="status",
-                        old_value=db_requirement.status.value,
+                        old_value=current_status.value,
                         new_value=metadata["status"].value,
                         change_reason=f"BLOCKED: {str(e)}",
-                        user_id=user_id,
-                        director_id=director_id,
-                        actor_id=actor_id,
+                        user_id=user_id, director_id=director_id, actor_id=actor_id,
                     )
                     raise ValueError(str(e))
 
-                # Validate persona authorization for the transition (after state machine validation)
-                # Get organization settings for potential custom persona matrix
                 org = get_organization(db, db_requirement.organization_id) if db_requirement.organization_id else None
                 org_settings = org.settings if org else None
                 try:
                     validate_persona_authorization(
-                        persona=persona,
-                        from_status=db_requirement.status,
-                        to_status=metadata["status"],
-                        org_settings=org_settings,
-                        require_persona=True,  # Strict enforcement enabled
+                        persona=persona, from_status=current_status, to_status=metadata["status"],
+                        org_settings=org_settings, require_persona=True,
                     )
                 except PersonaAuthorizationError as e:
                     logger.warning(f"Persona authorization blocked: {e}")
-                    # Log failed transition attempt to audit trail (CR-002: director/actor)
                     persona_str = persona.value if persona else "none"
                     _create_history_entry(
-                        db=db,
-                        requirement_id=requirement_id,
+                        db=db, requirement_id=requirement_id,
                         change_type=models.ChangeType.STATUS_CHANGED,
                         field_name="status",
-                        old_value=db_requirement.status.value,
+                        old_value=current_status.value,
                         new_value=metadata["status"].value,
                         change_reason=f"BLOCKED (persona={persona_str}): {str(e)}",
-                        user_id=user_id,
-                        director_id=director_id,
-                        actor_id=actor_id,
+                        user_id=user_id, director_id=director_id, actor_id=actor_id,
                     )
                     raise ValueError(str(e))
 
-                # CR-006: Removed current_version_id update logic
-                # Status now lives on versions, not on requirements
-                # Version approval is handled by transitioning the version's status
+                changes.append(("status", current_status.value, metadata["status"].value))
+                new_status = metadata["status"]
+                needs_new_version = True
 
-            # Update all fields from markdown
-            for field in ["title", "description", "status", "tags"]:
-                if field in metadata:
-                    old_value = getattr(db_requirement, field)
-                    new_value = metadata[field]
-                    if old_value != new_value:
-                        changes.append((field, str(old_value), str(new_value)))
-                        setattr(db_requirement, field, new_value)
-            # Update content (strip system fields before storage)
+            # Track field changes
+            if metadata.get("title") and metadata["title"] != current_title:
+                changes.append(("title", current_title, metadata["title"]))
+                new_title = metadata["title"]
+                needs_new_version = True
+
+            if metadata.get("description") != current_description:
+                changes.append(("description", str(current_description), str(metadata.get("description"))))
+                new_description = metadata.get("description")
+                needs_new_version = True
+
+            if metadata.get("tags", []) != current_tags:
+                changes.append(("tags", str(current_tags), str(metadata.get("tags", []))))
+                new_tags = metadata.get("tags", [])
+                needs_new_version = True
+
+            # Check actual content change
             cleaned_content = strip_system_fields_from_frontmatter(update_data["content"])
-            # BUG-004: Strip system fields from old content too before comparing
-            # This ensures tag/status changes don't trigger versioning
-            old_content = db_requirement.content or ""
-            try:
-                cleaned_old_content = strip_system_fields_from_frontmatter(old_content) if old_content else ""
-            except MarkdownParseError:
-                # If old content can't be parsed, use it as-is (legacy content)
-                cleaned_old_content = old_content
-            if content_has_changed(cleaned_old_content, cleaned_content):
+            if content_has_changed(cleaned_old, cleaned_content):
                 changes.append(("content", "markdown updated", "markdown updated"))
+                new_content = cleaned_content
+                needs_new_version = True
 
-                # CR-002: Create immutable version snapshot on content change
-                create_requirement_version(
-                    db=db,
-                    requirement=db_requirement,
-                    content=cleaned_content,
-                    user_id=user_id,
-                    change_reason="Content update",
-                )
-
-                # CR-002: Regress status to draft if approved/review requirement content changes
-                if should_regress_to_draft(db_requirement):
-                    old_status = db_requirement.status
-                    db_requirement.status = models.LifecycleStatus.DRAFT
-                    changes.append(("status", old_status.value, models.LifecycleStatus.DRAFT.value))
+                # Regress status to draft if content changes on approved/review requirement
+                if current_status in [models.LifecycleStatus.APPROVED, models.LifecycleStatus.REVIEW]:
+                    changes.append(("status", current_status.value, models.LifecycleStatus.DRAFT.value))
+                    new_status = models.LifecycleStatus.DRAFT
                     logger.info(
                         f"Requirement {db_requirement.human_readable_id or db_requirement.id} "
-                        f"regressed from {old_status.value} to draft due to content change"
+                        f"regressed from {current_status.value} to draft due to content change"
                     )
 
-                db_requirement.content = cleaned_content
-                # Recalculate content length and quality score
-                db_requirement.content_length = len(cleaned_content)
-                db_requirement.quality_score = calculate_quality_score(
-                    db_requirement.content_length,
-                    db_requirement.type
-                )
         except MarkdownParseError as e:
             raise ValueError(f"Invalid markdown content: {e}")
     else:
-        # Update individual fields and regenerate/update markdown
-        # Extract dependencies if provided directly (not through content)
+        # Update individual fields (not through content)
         if "depends_on" in update_data:
             new_dependencies = update_data["depends_on"]
 
-        # Extract guardrail references if provided directly (not through content)
         if "adheres_to" in update_data:
             new_adheres_to = update_data["adheres_to"]
+            version_adheres_to = new_adheres_to
+            needs_new_version = True
 
-        # Validate status transition BEFORE making any changes
-        if "status" in update_data and update_data["status"] != db_requirement.status:
-            # CR-004 Phase 4: DEPLOYED status removed from requirements.
-            # Deployment tracking is via deployed_version_id, not status.
-            # State machine will reject any invalid status transitions.
-
+        # Validate status transition
+        if "status" in update_data and update_data["status"] != current_status:
             try:
-                validate_transition(db_requirement.status, update_data["status"])
+                validate_transition(current_status, update_data["status"])
             except StateTransitionError as e:
                 logger.warning(f"State transition blocked: {e}")
-                # Log failed transition attempt to audit trail (CR-002: director/actor)
                 _create_history_entry(
-                    db=db,
-                    requirement_id=requirement_id,
+                    db=db, requirement_id=requirement_id,
                     change_type=models.ChangeType.STATUS_CHANGED,
                     field_name="status",
-                    old_value=db_requirement.status.value,
+                    old_value=current_status.value,
                     new_value=update_data["status"].value,
                     change_reason=f"BLOCKED: {str(e)}",
-                    user_id=user_id,
-                    director_id=director_id,
-                    actor_id=actor_id,
+                    user_id=user_id, director_id=director_id, actor_id=actor_id,
                 )
                 raise ValueError(str(e))
 
-            # Validate persona authorization for the transition (after state machine validation)
-            # Get organization settings for potential custom persona matrix
             org = get_organization(db, db_requirement.organization_id) if db_requirement.organization_id else None
             org_settings = org.settings if org else None
             try:
                 validate_persona_authorization(
-                    persona=persona,
-                    from_status=db_requirement.status,
-                    to_status=update_data["status"],
-                    org_settings=org_settings,
-                    require_persona=True,  # Strict enforcement enabled
+                    persona=persona, from_status=current_status, to_status=update_data["status"],
+                    org_settings=org_settings, require_persona=True,
                 )
             except PersonaAuthorizationError as e:
                 logger.warning(f"Persona authorization blocked: {e}")
-                # Log failed transition attempt to audit trail (CR-002: director/actor)
                 persona_str = persona.value if persona else "none"
                 _create_history_entry(
-                    db=db,
-                    requirement_id=requirement_id,
+                    db=db, requirement_id=requirement_id,
                     change_type=models.ChangeType.STATUS_CHANGED,
                     field_name="status",
-                    old_value=db_requirement.status.value,
+                    old_value=current_status.value,
                     new_value=update_data["status"].value,
                     change_reason=f"BLOCKED (persona={persona_str}): {str(e)}",
-                    user_id=user_id,
-                    director_id=director_id,
-                    actor_id=actor_id,
+                    user_id=user_id, director_id=director_id, actor_id=actor_id,
                 )
                 raise ValueError(str(e))
 
-            # CR-006: Removed current_version_id update logic
-            # Status now lives on versions, not on requirements
-            # Version approval is handled by transitioning the version's status
+            changes.append(("status", current_status.value, update_data["status"].value))
+            new_status = update_data["status"]
+            needs_new_version = True
 
-        fields_to_update = {}
-        for field, value in update_data.items():
-            if field in ["content", "depends_on"]:  # Skip content and depends_on (handled separately)
-                continue
-            old_value = getattr(db_requirement, field)
-            if old_value != value:
-                changes.append((field, str(old_value), str(value)))
-                setattr(db_requirement, field, value)
-                fields_to_update[field] = value
+        # Handle tags update
+        if "tags" in update_data and update_data["tags"] != current_tags:
+            changes.append(("tags", str(current_tags), str(update_data["tags"])))
+            new_tags = update_data["tags"]
+            needs_new_version = True
 
-        # Update markdown content if fields changed
-        if fields_to_update and db_requirement.content:
-            try:
-                updated_content = merge_content(
-                    db_requirement.content, fields_to_update
-                )
-            except MarkdownParseError:
-                # If merge fails, regenerate from template
-                updated_content = render_template(
-                    req_type=db_requirement.type,
-                    title=db_requirement.title,
-                    description=db_requirement.description or "",
-                    parent_id=db_requirement.parent_id,
-                    status=db_requirement.status.value,
-                    tags=db_requirement.tags,
-                )
-            # Strip system fields before storage
-            db_requirement.content = strip_system_fields_from_frontmatter(updated_content)
-            # Recalculate content length and quality score after content update
-            db_requirement.content_length = len(db_requirement.content) if db_requirement.content else 0
-            db_requirement.quality_score = calculate_quality_score(
-                db_requirement.content_length,
-                db_requirement.type
-            )
+    # CR-009: Create new version if any content/metadata changed
+    if needs_new_version:
+        # Validate content length for status transitions to review/approved
+        content_length = len(new_content) if new_content else 0
+        if new_status in [models.LifecycleStatus.REVIEW, models.LifecycleStatus.APPROVED]:
+            if not is_content_length_valid_for_approval(content_length, db_requirement.type):
+                error_msg = get_length_validation_error(content_length, db_requirement.type)
+                logger.warning(f"Blocked status transition due to content length: {error_msg}")
+                raise ValueError(error_msg)
 
-    # Validate content length for status transitions to review/approved
-    if db_requirement.status in [models.LifecycleStatus.REVIEW, models.LifecycleStatus.APPROVED]:
-        if not is_content_length_valid_for_approval(db_requirement.content_length, db_requirement.type):
-            error_msg = get_length_validation_error(db_requirement.content_length, db_requirement.type)
-            logger.warning(f"Blocked status transition due to content length: {error_msg}")
-            raise ValueError(error_msg)
+        # Validate guardrail references before creating version
+        if new_adheres_to:
+            for guardrail_id in new_adheres_to:
+                guardrail = get_guardrail(db, guardrail_id, db_requirement.organization_id)
+                if not guardrail:
+                    logger.warning(f"Invalid guardrail reference: {guardrail_id}")
+                    raise ValueError(f"Invalid guardrail reference '{guardrail_id}': guardrail not found or not in same organization")
 
-    # Update dependencies if provided
+        create_requirement_version(
+            db=db,
+            requirement=db_requirement,
+            content=new_content,
+            title=new_title,
+            description=new_description,
+            status=new_status,
+            tags=new_tags,
+            adheres_to=version_adheres_to,
+            user_id=user_id,
+            change_reason="Content update" if "content" in changes else "Metadata update",
+        )
+
+    # Update dependencies if provided (dependencies still live on Requirement)
     if new_dependencies is not None:
-        # Validate dependencies
-        if new_dependencies:  # Only validate if there are dependencies
+        if new_dependencies:
             is_valid, error_msg, warnings = validate_dependencies(
                 db, requirement_id, new_dependencies, db_requirement.project_id
             )
@@ -811,7 +813,6 @@ def update_requirement(
                 logger.warning(f"Dependency validation failed: {error_msg}")
                 raise ValueError(f"Invalid dependencies: {error_msg}")
 
-            # Log priority inversion warnings
             for warning in warnings:
                 logger.warning(
                     f"Priority inversion: P{warning['requirement_priority']} requirement "
@@ -836,21 +837,12 @@ def update_requirement(
 
         changes.append(("dependencies", "dependencies updated", "dependencies updated"))
 
-    # Validate and update guardrail references if provided
-    if new_adheres_to is not None:
-        # Validate guardrail references
-        if new_adheres_to:  # Only validate if there are references
-            for guardrail_id in new_adheres_to:
-                guardrail = get_guardrail(db, guardrail_id, db_requirement.organization_id)
-                if not guardrail:
-                    logger.warning(f"Invalid guardrail reference: {guardrail_id}")
-                    raise ValueError(f"Invalid guardrail reference '{guardrail_id}': guardrail not found or not in same organization")
-
-        # Update adheres_to field
-        db_requirement.adheres_to = new_adheres_to
+    # CR-009: adheres_to is now stored on versions, handled in version creation above
+    # Track the change for history if adheres_to was updated
+    if new_adheres_to is not None and new_adheres_to != current_adheres_to:
         changes.append(("adheres_to", "guardrail references updated", "guardrail references updated"))
 
-    if changes:
+    if changes or needs_new_version:
         db.commit()
         db.refresh(db_requirement)
 
@@ -966,7 +958,8 @@ def get_requirement_children(
     return (
         db.query(models.Requirement)
         .filter(models.Requirement.parent_id == parent_id)
-        .order_by(_status_sort_expression(), models.Requirement.created_at.desc())
+        # CR-009: Sort by type hierarchy and human_readable_id
+        .order_by(_type_sort_expression(), models.Requirement.human_readable_id.desc())
         .all()
     )
 

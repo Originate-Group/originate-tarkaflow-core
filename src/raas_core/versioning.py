@@ -52,7 +52,11 @@ def create_requirement_version(
     db: Session,
     requirement: models.Requirement,
     content: str,
+    title: str,
+    description: Optional[str] = None,
     status: models.LifecycleStatus = models.LifecycleStatus.DRAFT,
+    tags: Optional[list] = None,
+    adheres_to: Optional[list] = None,
     user_id: Optional[UUID] = None,
     source_work_item_id: Optional[UUID] = None,
     change_reason: Optional[str] = None,
@@ -63,17 +67,24 @@ def create_requirement_version(
     to DRAFT but should be set to the requirement's current status when creating
     a version from an existing requirement.
 
+    CR-009: All content and metadata fields now live on versions. Title, description,
+    tags, adheres_to, content_length, and quality_score are stored on each version.
+
     This function:
     1. Computes content hash for conflict detection
-    2. Determines next version number
-    3. Creates RequirementVersion record with status
-    4. Updates requirement's content_hash
+    2. Calculates content_length and quality_score
+    3. Determines next version number
+    4. Creates RequirementVersion record with all fields
 
     Args:
         db: Database session
         requirement: The requirement being versioned
         content: The content to snapshot
+        title: Title for this version (extracted from content)
+        description: Description for this version (extracted from content)
         status: Status for this version (CR-006)
+        tags: Tags for this version (CR-009)
+        adheres_to: Guardrail references for this version (CR-009)
         user_id: User making the change
         source_work_item_id: Work Item (CR/IR) that caused this version
         change_reason: Human-readable reason for the change
@@ -81,7 +92,12 @@ def create_requirement_version(
     Returns:
         The created RequirementVersion
     """
+    # Import here to avoid circular imports
+    from .quality import calculate_quality_score
+
     content_hash = compute_content_hash(content)
+    content_length = len(content) if content else 0
+    quality_score = calculate_quality_score(content_length, requirement.type)
     version_number = get_next_version_number(db, requirement.id)
 
     version = models.RequirementVersion(
@@ -90,8 +106,14 @@ def create_requirement_version(
         status=status,  # CR-006: Status lives on versions
         content=content,
         content_hash=content_hash,
-        title=requirement.title,
-        description=requirement.description,
+        title=title,
+        description=description,
+        # CR-009: Metadata fields on version
+        tags=tags or [],
+        adheres_to=adheres_to or [],
+        content_length=content_length,
+        quality_score=quality_score,
+        # Audit and provenance
         source_work_item_id=source_work_item_id,
         change_reason=change_reason,
         created_by_user_id=user_id,
@@ -99,9 +121,6 @@ def create_requirement_version(
 
     db.add(version)
     db.flush()  # Get the version ID
-
-    # Update requirement's content_hash for conflict detection
-    requirement.content_hash = content_hash
 
     logger.info(
         f"Created version {version_number} (status={status.value}) for requirement "

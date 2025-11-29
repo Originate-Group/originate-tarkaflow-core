@@ -261,13 +261,43 @@ def get_requirements_ready_to_implement(
     Returns:
         List of approved requirements with no unmet dependencies
     """
+    from sqlalchemy import case
+
+    # CR-009: Status lives on RequirementVersion. Join with resolved version to filter.
+    # Subquery to get resolved version ID (deployed > latest approved > latest)
+    resolved_version_subq = (
+        db.query(models.RequirementVersion.id)
+        .filter(models.RequirementVersion.requirement_id == models.Requirement.id)
+        .order_by(
+            case(
+                (models.RequirementVersion.id == models.Requirement.deployed_version_id, 0),
+                else_=1
+            ),
+            case(
+                (models.RequirementVersion.status == models.LifecycleStatus.APPROVED, 0),
+                else_=1
+            ),
+            models.RequirementVersion.version_number.desc()
+        )
+        .limit(1)
+        .correlate(models.Requirement)
+        .scalar_subquery()
+    )
+
     # Get approved requirements (ready for implementation)
-    query = db.query(models.Requirement).filter(
-        models.Requirement.project_id == project_id,
-        models.Requirement.organization_id.in_(organization_ids),
-        models.Requirement.status == models.LifecycleStatus.APPROVED,
-        # Exclude requirements that already have a deployed version
-        models.Requirement.deployed_version_id.is_(None)
+    query = (
+        db.query(models.Requirement)
+        .join(
+            models.RequirementVersion,
+            models.RequirementVersion.id == resolved_version_subq
+        )
+        .filter(
+            models.Requirement.project_id == project_id,
+            models.Requirement.organization_id.in_(organization_ids),
+            models.RequirementVersion.status == models.LifecycleStatus.APPROVED,
+            # Exclude requirements that already have a deployed version
+            models.Requirement.deployed_version_id.is_(None)
+        )
     )
 
     ready_requirements = []
