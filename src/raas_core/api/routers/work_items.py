@@ -25,6 +25,7 @@ from ...models import (
     ChangeType,
     User,
     work_item_affects,
+    work_item_target_versions,
     release_includes,
 )
 from ...schemas import (
@@ -39,6 +40,9 @@ from ...schemas import (
     RequirementVersionListItem,
     RequirementVersionListResponse,
     RequirementVersionDiff,
+    TargetVersionSummary,
+    DriftWarning,
+    DriftCheckResponse,
 )
 from ...work_item_state_machine import (
     validate_work_item_transition,
@@ -253,6 +257,17 @@ def work_item_to_response(work_item: WorkItem, db: Session) -> WorkItemResponse:
 
     affected_ids = [r.id for r in work_item.affected_requirements]
 
+    # RAAS-FEAT-099: Build target versions summary
+    target_version_summaries = []
+    for tv in work_item.target_versions:
+        target_version_summaries.append(TargetVersionSummary(
+            id=tv.id,
+            requirement_id=tv.requirement_id,
+            requirement_human_readable_id=tv.requirement.human_readable_id if tv.requirement else None,
+            version_number=tv.version_number,
+            title=tv.title,
+        ))
+
     # Release-specific: get included work item IDs (RAAS-FEAT-102)
     included_ids = []
     if work_item.work_item_type == WorkItemType.RELEASE:
@@ -274,6 +289,7 @@ def work_item_to_response(work_item: WorkItem, db: Session) -> WorkItemResponse:
         tags=work_item.tags or [],
         affects_count=len(affected_ids),
         affected_requirement_ids=affected_ids,
+        target_versions=target_version_summaries,
         proposed_content=work_item.proposed_content,
         baseline_hashes=work_item.baseline_hashes,
         implementation_refs=work_item.implementation_refs,
@@ -393,6 +409,40 @@ async def create_work_item(
     # Store baseline hashes for CRs
     if data.work_item_type == WorkItemType.CR and baseline_hashes:
         work_item.baseline_hashes = baseline_hashes
+
+    # RAAS-FEAT-099: Capture target versions (immutable)
+    target_versions = []
+
+    if data.target_version_ids:
+        # Explicit target versions provided - use those
+        for version_id_str in data.target_version_ids:
+            try:
+                version_uuid = UUID(version_id_str)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid version UUID: {version_id_str}"
+                )
+            version = db.query(RequirementVersion).filter(
+                RequirementVersion.id == version_uuid
+            ).first()
+            if not version:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"RequirementVersion not found: {version_id_str}"
+                )
+            target_versions.append(version)
+    else:
+        # Auto-capture current versions from affected requirements
+        for req in affected_reqs:
+            if req.current_version_id:
+                current_version = db.query(RequirementVersion).filter(
+                    RequirementVersion.id == req.current_version_id
+                ).first()
+                if current_version:
+                    target_versions.append(current_version)
+
+    work_item.target_versions = target_versions
 
     # Add bidirectional tags
     if affected_reqs:
@@ -548,6 +598,39 @@ async def update_work_item(
 
     if data.implementation_refs is not None:
         work_item.implementation_refs = data.implementation_refs
+
+    # RAAS-FEAT-099: Target versions update (only allowed in CREATED status)
+    if data.target_version_ids is not None:
+        if work_item.status != WorkItemStatus.CREATED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot modify target versions after work has started. "
+                       f"Work Item '{work_item.human_readable_id}' is in status '{work_item.status.value}'. "
+                       f"Cancel this work item and create a new one if scope needs to change."
+            )
+
+        # Resolve and update target versions
+        new_target_versions = []
+        for version_id_str in data.target_version_ids:
+            try:
+                version_uuid = UUID(version_id_str)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid version UUID: {version_id_str}"
+                )
+            version = db.query(RequirementVersion).filter(
+                RequirementVersion.id == version_uuid
+            ).first()
+            if not version:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"RequirementVersion not found: {version_id_str}"
+                )
+            new_target_versions.append(version)
+
+        work_item.target_versions = new_target_versions
+        changes.append(("target_versions", None, f"{len(new_target_versions)} version(s)"))
 
     # Release-specific updates (RAAS-FEAT-102)
     if work_item.work_item_type == WorkItemType.RELEASE:
@@ -1393,4 +1476,68 @@ async def check_work_item_conflicts(
         has_conflicts=conflict_count > 0,
         conflict_count=conflict_count,
         affected_requirements=conflicts,
+    )
+
+
+@router.get("/{work_item_id}/drift", response_model=DriftCheckResponse)
+async def check_work_item_drift(
+    work_item_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Check for version drift on a Work Item (RAAS-FEAT-099).
+
+    Semantic version drift detection that shows which targeted requirements
+    have newer versions available.
+
+    Unlike check-conflicts (hash-based), this provides semantic information:
+    "You're targeting RAAS-FEAT-042 v3, but it's now at v5"
+
+    Returns:
+        DriftCheckResponse with drift warnings for each affected requirement
+    """
+    work_item = resolve_work_item_id(db, work_item_id)
+    if not work_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Work Item not found: {work_item_id}"
+        )
+
+    # Eager load target versions and their requirements
+    db.refresh(work_item, ["target_versions"])
+
+    drift_warnings = []
+
+    for target_version in work_item.target_versions:
+        # Get the requirement this version belongs to
+        req = target_version.requirement
+        if not req:
+            continue
+
+        # Get current version number from the requirement
+        current_version_num = 1
+        if req.current_version_id:
+            current_version = db.query(RequirementVersion).filter(
+                RequirementVersion.id == req.current_version_id
+            ).first()
+            if current_version:
+                current_version_num = current_version.version_number
+
+        target_version_num = target_version.version_number
+
+        # Check for drift (current > target means spec has evolved)
+        if current_version_num > target_version_num:
+            drift_warnings.append(DriftWarning(
+                requirement_id=req.id,
+                requirement_human_readable_id=req.human_readable_id,
+                target_version=target_version_num,
+                current_version=current_version_num,
+                versions_behind=current_version_num - target_version_num,
+            ))
+
+    return DriftCheckResponse(
+        work_item_id=str(work_item.id),
+        work_item_human_readable_id=work_item.human_readable_id,
+        has_drift=len(drift_warnings) > 0,
+        drift_warnings=drift_warnings,
     )

@@ -178,6 +178,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 # CR-002 (RAAS-FEAT-104): Work Item Diffs and Conflict Detection
                 "get_work_item_diffs": handlers.handle_get_work_item_diffs,
                 "check_work_item_conflicts": handlers.handle_check_work_item_conflicts,
+                # RAAS-FEAT-099: Version Drift Detection
+                "check_work_item_drift": handlers.handle_check_work_item_drift,
             }
 
             # Look up and execute handler

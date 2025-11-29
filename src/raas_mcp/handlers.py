@@ -2169,3 +2169,49 @@ async def handle_check_work_item_conflicts(
         text_lines.append("")
 
     return [TextContent(type="text", text="\n".join(text_lines))], current_scope
+
+
+async def handle_check_work_item_drift(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Check for version drift in a Work Item (RAAS-FEAT-099)."""
+    work_item_id = arguments["work_item_id"]
+
+    response = await client.get(f"/work-items/{work_item_id}/drift")
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Checked drift for Work Item {work_item_id}")
+
+    # Format response
+    has_drift = result.get('has_drift', False)
+    drift_warnings = result.get('drift_warnings', [])
+
+    hrid = result.get('work_item_human_readable_id', work_item_id)
+
+    if has_drift:
+        header = f"## DRIFT DETECTED: {hrid}"
+        status_msg = f"**{len(drift_warnings)} requirement(s) have newer versions**"
+    else:
+        header = f"## No Drift: {hrid}"
+        status_msg = "All targeted requirements are at their current versions"
+
+    text_lines = [header, status_msg, ""]
+
+    for warning in drift_warnings:
+        req_hrid = warning.get('requirement_human_readable_id', str(warning.get('requirement_id', 'unknown')))
+        target_v = warning.get('target_version', 1)
+        current_v = warning.get('current_version', 1)
+        versions_behind = warning.get('versions_behind', 0)
+
+        text_lines.append(f"### DRIFT: {req_hrid}")
+        text_lines.append(f"- Targeting: v{target_v}")
+        text_lines.append(f"- Current: v{current_v}")
+        text_lines.append(f"- Versions behind: {versions_behind}")
+        text_lines.append("")
+
+    if not drift_warnings and not has_drift:
+        text_lines.append("*No version drift detected. Work item targets are up-to-date.*")
+
+    return [TextContent(type="text", text="\n".join(text_lines))], current_scope

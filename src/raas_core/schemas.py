@@ -1147,6 +1147,13 @@ class WorkItemCreate(BaseModel):
         description="List of requirement UUIDs or human-readable IDs this work item affects"
     )
 
+    # RAAS-FEAT-099: Target specific requirement versions (immutable)
+    # If provided, these versions are targeted; if not, current versions are auto-captured from affects
+    target_version_ids: Optional[list[str]] = Field(
+        None,
+        description="List of RequirementVersion UUIDs to target (optional, auto-captured from affects if not provided)"
+    )
+
     # CR-specific: proposed content (RAAS-FEAT-099)
     proposed_content: Optional[dict] = Field(
         None,
@@ -1184,6 +1191,12 @@ class WorkItemUpdate(BaseModel):
     affects: Optional[list[str]] = Field(
         None,
         description="List of requirement UUIDs or human-readable IDs (replaces existing)"
+    )
+
+    # RAAS-FEAT-099: Update target versions (only allowed when status is 'created')
+    target_version_ids: Optional[list[str]] = Field(
+        None,
+        description="List of RequirementVersion UUIDs to target (only modifiable before work starts)"
     )
 
     # CR-specific updates
@@ -1225,6 +1238,9 @@ class WorkItemResponse(BaseModel):
     # Affected requirements
     affects_count: int = Field(description="Number of affected requirements")
     affected_requirement_ids: list[UUID] = Field(default_factory=list)
+
+    # RAAS-FEAT-099: Target versions (immutable snapshots this work item implements)
+    target_versions: list["TargetVersionSummary"] = Field(default_factory=list)
 
     # CR-specific
     proposed_content: Optional[dict] = None
@@ -1346,6 +1362,51 @@ class RequirementVersionListResponse(BaseModel):
     total: int
     requirement_id: UUID
     current_version_number: Optional[int] = None
+
+
+# =============================================================================
+# RAAS-FEAT-099: Version Targeting & Drift Detection
+# =============================================================================
+
+
+class TargetVersionSummary(BaseModel):
+    """Schema for target version summary in Work Item responses.
+
+    Lightweight representation of a targeted RequirementVersion.
+    """
+
+    id: UUID
+    requirement_id: UUID
+    requirement_human_readable_id: Optional[str] = None
+    version_number: int
+    title: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DriftWarning(BaseModel):
+    """Schema for a single drift warning.
+
+    Indicates a requirement has newer versions than the targeted version.
+    """
+
+    requirement_id: UUID
+    requirement_human_readable_id: Optional[str] = None
+    target_version: int = Field(description="Version number targeted by the work item")
+    current_version: int = Field(description="Current version number of the requirement")
+    versions_behind: int = Field(description="Number of versions behind current")
+
+
+class DriftCheckResponse(BaseModel):
+    """Schema for drift check response.
+
+    Returns semantic version drift information for a work item.
+    """
+
+    work_item_id: str
+    work_item_human_readable_id: Optional[str] = None
+    has_drift: bool = Field(description="True if any targeted requirements have newer versions")
+    drift_warnings: list[DriftWarning] = Field(default_factory=list)
 
 
 class RequirementVersionDiff(BaseModel):

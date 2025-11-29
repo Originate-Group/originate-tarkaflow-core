@@ -1900,4 +1900,23 @@ def get_tools() -> list[Tool]:
                 "required": ["work_item_id"]
             }
         ),
+        Tool(
+            name="check_work_item_drift",
+            description="Check for version drift on a Work Item (RAAS-FEAT-099). "
+                       "\n\nSemantic version drift detection that shows which targeted requirements "
+                       "have newer versions available. Unlike check_work_item_conflicts (hash-based), "
+                       "this provides semantic information: 'You're targeting RAAS-FEAT-042 v3, but it's now at v5'"
+                       "\n\nWHEN TO USE:"
+                       "\n• During implementation - check if specs evolved since you started"
+                       "\n• Before marking implemented - ensure you implemented the correct version"
+                       "\n• When picking up stale work - see if requirements have changed"
+                       "\n\nRETURNS: Drift warnings showing target version vs current version for each requirement",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "work_item_id": {"type": "string", "description": "UUID or human-readable ID (e.g., 'IR-001', 'CR-042')"}
+                },
+                "required": ["work_item_id"]
+            }
+        ),
     ]

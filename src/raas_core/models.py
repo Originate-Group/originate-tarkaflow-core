@@ -66,6 +66,20 @@ release_includes = Table(
 )
 
 
+# RAAS-FEAT-099: Work Item target versions association table
+# Links Work Items to specific RequirementVersion snapshots (immutable)
+# Enables semantic drift detection: "targeting v3, current is v5"
+work_item_target_versions = Table(
+    'work_item_target_versions',
+    Base.metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid4),
+    Column('work_item_id', UUID(as_uuid=True), ForeignKey('work_items.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('requirement_version_id', UUID(as_uuid=True), ForeignKey('requirement_versions.id', ondelete='CASCADE'), nullable=False, index=True),
+    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint('work_item_id', 'requirement_version_id', name='uq_work_item_target_version'),
+)
+
+
 class RequirementType(str, enum.Enum):
     """Requirement type enum for hierarchy levels."""
 
@@ -1362,6 +1376,14 @@ class WorkItem(Base):
 
     # Versions created by this work item (for CRs)
     created_versions = relationship("RequirementVersion", back_populates="source_work_item")
+
+    # RAAS-FEAT-099: Target versions (immutable snapshots this work item implements)
+    # Enables semantic drift detection: "targeting v3, current is v5"
+    target_versions = relationship(
+        "RequirementVersion",
+        secondary=work_item_target_versions,
+        backref="targeting_work_items"
+    )
 
     # RAAS-FEAT-102: Release includes relationship (self-referential)
     # For type=release: the IR/CR/BUG work items bundled in this release
