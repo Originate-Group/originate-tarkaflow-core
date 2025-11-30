@@ -2302,11 +2302,12 @@ async def handle_list_acceptance_criteria(
     for ac in items:
         status_icon = "[x]" if ac.get('met') else "[ ]"
         ordinal = ac.get('ordinal', 0)
+        ac_id = ac.get('id', '')
         criteria = ac.get('criteria_text', '')[:100]
         if len(ac.get('criteria_text', '')) > 100:
             criteria += "..."
 
-        text_lines.append(f"{status_icon} **AC {ordinal}**: {criteria}")
+        text_lines.append(f"{status_icon} **AC {ordinal}** `{ac_id}`: {criteria}")
 
         if ac.get('met'):
             met_by = ac.get('met_by_email', 'Unknown')

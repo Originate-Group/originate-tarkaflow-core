@@ -1935,7 +1935,8 @@ def get_tools() -> list[Tool]:
             name="list_acceptance_criteria",
             description="List Acceptance Criteria for a requirement version (CR-017: TARKA-FEAT-111). "
                        "\n\nReturns all ACs for a specific requirement version with their met status."
-                       "\n\nRETURNS: List of AcceptanceCriteria with ordinal, criteria_text, met status, and lineage",
+                       "\n\nRETURNS: List of AcceptanceCriteria with id (UUID), ordinal, criteria_text, met status, and lineage"
+                       "\n\nUse the returned UUID with update_acceptance_criteria() to mark ACs as met/unmet.",
             inputSchema={
                 "type": "object",
                 "properties": {
