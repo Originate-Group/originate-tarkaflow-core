@@ -179,6 +179,9 @@ def upgrade() -> None:
         existing_by_hash = {ac[2]: {'id': ac[0], 'ordinal': ac[1], 'category': ac[3]}
                            for ac in existing_acs}
 
+        # Find max ordinal for this version to append new ACs after existing ones
+        max_ordinal = max((ac[1] for ac in existing_acs), default=0)
+
         # Get predecessor AC map for this requirement
         req_predecessor_acs = predecessor_acs.get(str(requirement_id), {})
         new_ac_map = {}
@@ -198,7 +201,8 @@ def upgrade() -> None:
                     categories_updated += 1
                 new_ac_map[content_hash] = existing['id']
             else:
-                # New AC - insert it
+                # New AC - insert it with ordinal after existing ACs
+                max_ordinal += 1
                 source_ac_id = req_predecessor_acs.get(content_hash)
 
                 result = session.execute(sa.text("""
@@ -211,7 +215,7 @@ def upgrade() -> None:
                     RETURNING id
                 """), {
                     'version_id': version_id,
-                    'ordinal': ac_data['ordinal'],
+                    'ordinal': max_ordinal,
                     'criteria_text': ac_data['criteria_text'],
                     'content_hash': content_hash,
                     'met': ac_data['met'],
