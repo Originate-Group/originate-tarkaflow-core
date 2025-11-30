@@ -567,8 +567,12 @@ def extract_acceptance_criteria(content: str) -> list[dict]:
         return []
 
     # Find Acceptance Criteria section
-    # Look for "## Acceptance Criteria" header
-    ac_section_pattern = r'##\s+Acceptance\s+Criteria\s*\n(.*?)(?=\n##|\n#\s|\Z)'
+    # Look for "## Acceptance Criteria" header and capture until:
+    # - Next level-2 heading (## but NOT ###)
+    # - Next level-1 heading (# followed by space)
+    # - End of string
+    # The pattern uses negative lookahead (?!#) to avoid matching ### subsections
+    ac_section_pattern = r'##\s+Acceptance\s+Criteria\s*\n(.*?)(?=\n##(?!#)|\n#\s|\Z)'
     ac_match = re.search(ac_section_pattern, content, re.DOTALL | re.IGNORECASE)
 
     if not ac_match:

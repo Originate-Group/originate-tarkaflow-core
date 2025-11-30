@@ -44,7 +44,8 @@ def extract_acceptance_criteria(content: str) -> list[dict]:
         return []
 
     # Find Acceptance Criteria section
-    ac_section_pattern = r'##\s+Acceptance\s+Criteria\s*\n(.*?)(?=\n##|\n#\s|\Z)'
+    # Uses negative lookahead (?!#) to avoid matching ### subsections
+    ac_section_pattern = r'##\s+Acceptance\s+Criteria\s*\n(.*?)(?=\n##(?!#)|\n#\s|\Z)'
     ac_match = re.search(ac_section_pattern, content, re.DOTALL | re.IGNORECASE)
 
     if not ac_match:
