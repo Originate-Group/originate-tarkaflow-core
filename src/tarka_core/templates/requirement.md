@@ -48,11 +48,21 @@ BAD: "Create Redis key rate:{user_id}:{minute}, increment on each request,
 ## Acceptance Criteria
 
 <!--
+CR-017: Acceptance Criteria are extracted from content and tracked as separate
+entities. This enables marking individual ACs as "met" without triggering
+new requirement versions.
+
+FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
+will be extracted as a separate AcceptanceCriteria record.
+
 What must be TRUE when this is complete?
 Focus on OBSERVABLE behavior, not implementation details.
 
 GOOD: "Requests beyond limit receive 429 response with retry guidance"
 BAD: "Redis INCR returns value > 100"
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
 -->
 
 - [ ] [Observable behavior 1]

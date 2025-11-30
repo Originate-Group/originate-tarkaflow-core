@@ -60,6 +60,13 @@ Describe the CAPABILITY from the user's perspective.
 ## Acceptance Criteria
 
 <!--
+CR-017: Acceptance Criteria are extracted from content and tracked as separate
+entities. This enables marking individual ACs as "met" without triggering
+new requirement versions.
+
+FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
+will be extracted as a separate AcceptanceCriteria record.
+
 What must be TRUE for this feature to be complete?
 Write from the USER's perspective - what they can observe/verify.
 
@@ -68,6 +75,9 @@ GOOD: "System prevents creating orphaned requirements"
 
 BAD: "API returns 400 if parent_id is invalid UUID"
 BAD: "Database constraint enforces referential integrity"
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
 -->
 
 - [ ] [User-observable outcome 1]

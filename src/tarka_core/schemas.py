@@ -1427,6 +1427,63 @@ class RequirementVersionListResponse(BaseModel):
 
 
 # =============================================================================
+# CR-017: Acceptance Criteria Entity Management (TARKA-FEAT-111)
+# =============================================================================
+
+
+class AcceptanceCriteriaResponse(BaseModel):
+    """Schema for AcceptanceCriteria response.
+
+    CR-017: Each AC belongs to a specific RequirementVersion with immutable
+    specification text but mutable completion status.
+    """
+
+    id: UUID
+    requirement_version_id: UUID
+    ordinal: int = Field(description="Display order within the version (1, 2, 3...)")
+    criteria_text: str = Field(description="The specification text (immutable)")
+    content_hash: str = Field(description="SHA-256 of criteria_text for matching")
+    met: bool = Field(description="Mutable completion status")
+    met_at: Optional[datetime] = Field(None, description="When marked met (NULL if not met)")
+    met_by_user_id: Optional[UUID] = Field(None, description="Who marked it met")
+    met_by_email: Optional[str] = Field(None, description="Email of user who marked it met")
+    source_ac_id: Optional[UUID] = Field(None, description="Predecessor AC for lineage tracking")
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AcceptanceCriteriaListResponse(BaseModel):
+    """Schema for list of AcceptanceCriteria."""
+
+    items: list[AcceptanceCriteriaResponse]
+    total: int
+    requirement_id: UUID
+    version_number: int
+
+
+class AcceptanceCriteriaSummary(BaseModel):
+    """Schema for AC completion summary.
+
+    CR-017: Aggregated completion state for display.
+    """
+
+    total: int = Field(description="Total number of acceptance criteria")
+    met: int = Field(description="Number of criteria marked as met")
+    unmet: int = Field(description="Number of criteria not yet met")
+    completion_percent: float = Field(description="Percentage of criteria met (0-100)")
+
+
+class AcceptanceCriteriaUpdate(BaseModel):
+    """Schema for updating AC met status.
+
+    CR-017: Only met status is updatable; criteria_text is immutable.
+    """
+
+    met: bool = Field(description="New met status (true=met, false=unmet)")
+
+
+# =============================================================================
 # RAAS-FEAT-099: Version Targeting & Drift Detection
 # =============================================================================
 

@@ -128,6 +128,27 @@ def create_requirement_version(
         f"{f' from work item {source_work_item_id}' if source_work_item_id else ''}"
     )
 
+    # CR-017: Extract and create Acceptance Criteria from content
+    from .markdown_utils import extract_acceptance_criteria
+    acceptance_criteria = extract_acceptance_criteria(content)
+
+    if acceptance_criteria:
+        # Get predecessor version for carry-forward logic
+        predecessor_version = None
+        if version_number > 1:
+            predecessor_version = db.query(models.RequirementVersion).filter(
+                models.RequirementVersion.requirement_id == requirement.id,
+                models.RequirementVersion.version_number == version_number - 1
+            ).first()
+
+        created_acs = create_acceptance_criteria_for_version(
+            db=db,
+            new_version=version,
+            acceptance_criteria=acceptance_criteria,
+            predecessor_version=predecessor_version,
+        )
+        logger.info(f"Created {len(created_acs)} acceptance criteria for version {version_number}")
+
     return version
 
 
@@ -270,3 +291,172 @@ def content_has_changed(old_content: Optional[str], new_content: str) -> bool:
     old_hash = compute_content_hash(old_content)
     new_hash = compute_content_hash(new_content)
     return old_hash != new_hash
+
+
+# =============================================================================
+# CR-017: Acceptance Criteria Version Transition (TARKA-FEAT-111)
+# =============================================================================
+
+
+def compute_ac_content_hash(criteria_text: str) -> str:
+    """Compute SHA-256 hash of AC criteria text for carry-forward matching.
+
+    CR-017: Uses strict text matching - any change to criteria text is treated
+    as a new AC (met status resets to false).
+
+    Args:
+        criteria_text: The acceptance criteria specification text
+
+    Returns:
+        SHA-256 hex digest of normalized (trimmed) criteria text
+    """
+    normalized = criteria_text.strip()
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def create_acceptance_criteria_for_version(
+    db: Session,
+    new_version: models.RequirementVersion,
+    acceptance_criteria: list[dict],
+    predecessor_version: Optional[models.RequirementVersion] = None,
+) -> list[models.AcceptanceCriteria]:
+    """Create AcceptanceCriteria records for a new version with carry-forward logic.
+
+    CR-017 / TARKA-REQ-104 Version Transition Algorithm:
+    1. Compute content_hash for each incoming AC text
+    2. Query predecessor version's ACs (if exists)
+    3. For each incoming AC:
+       - Match by content_hash against predecessor ACs
+       - If match found: create new AC with met=predecessor.met, source_ac_id=predecessor.id
+       - If no match: create new AC with met=false, source_ac_id=NULL
+    4. Predecessor ACs not in incoming list are not copied (remain on old version only)
+
+    Args:
+        db: Database session
+        new_version: The RequirementVersion being created
+        acceptance_criteria: List of AC dicts with 'criteria_text' and optionally 'ordinal'
+        predecessor_version: The previous version to carry forward met status from
+
+    Returns:
+        List of created AcceptanceCriteria records
+    """
+    created_acs = []
+
+    # Build predecessor AC lookup by content_hash
+    predecessor_ac_map: dict[str, models.AcceptanceCriteria] = {}
+    if predecessor_version:
+        for pred_ac in predecessor_version.acceptance_criteria:
+            predecessor_ac_map[pred_ac.content_hash] = pred_ac
+
+    for idx, ac_data in enumerate(acceptance_criteria):
+        criteria_text = ac_data.get('criteria_text', '').strip()
+        if not criteria_text:
+            continue
+
+        ordinal = ac_data.get('ordinal', idx + 1)
+        content_hash = compute_ac_content_hash(criteria_text)
+
+        # Check for matching predecessor AC
+        predecessor_ac = predecessor_ac_map.get(content_hash)
+
+        ac = models.AcceptanceCriteria(
+            requirement_version_id=new_version.id,
+            ordinal=ordinal,
+            criteria_text=criteria_text,
+            content_hash=content_hash,
+            # Carry forward met status if matching predecessor exists
+            met=predecessor_ac.met if predecessor_ac else False,
+            met_at=predecessor_ac.met_at if predecessor_ac else None,
+            met_by_user_id=predecessor_ac.met_by_user_id if predecessor_ac else None,
+            # Lineage tracking
+            source_ac_id=predecessor_ac.id if predecessor_ac else None,
+        )
+
+        db.add(ac)
+        created_acs.append(ac)
+
+        if predecessor_ac:
+            logger.info(
+                f"AC '{criteria_text[:50]}...' carried forward from predecessor "
+                f"(met={predecessor_ac.met}, source_ac_id={predecessor_ac.id})"
+            )
+        else:
+            logger.info(f"New AC '{criteria_text[:50]}...' created with met=false")
+
+    db.flush()  # Ensure IDs are assigned
+    return created_acs
+
+
+def update_acceptance_criteria_met_status(
+    db: Session,
+    ac_id: UUID,
+    met: bool,
+    user_id: UUID,
+) -> Optional[models.AcceptanceCriteria]:
+    """Update the met status of an AcceptanceCriteria record.
+
+    CR-017: Met status is mutable without triggering version changes.
+    This enables granular progress tracking.
+
+    Args:
+        db: Database session
+        ac_id: UUID of the AcceptanceCriteria to update
+        met: New met status (True/False)
+        user_id: UUID of user marking the AC
+
+    Returns:
+        Updated AcceptanceCriteria or None if not found
+    """
+    from datetime import datetime
+
+    ac = db.query(models.AcceptanceCriteria).filter(
+        models.AcceptanceCriteria.id == ac_id
+    ).first()
+
+    if not ac:
+        return None
+
+    old_met = ac.met
+    ac.met = met
+
+    if met:
+        ac.met_at = datetime.utcnow()
+        ac.met_by_user_id = user_id
+    else:
+        # Clearing met status
+        ac.met_at = None
+        ac.met_by_user_id = None
+
+    db.flush()
+
+    logger.info(
+        f"AC {ac_id} met status updated: {old_met} -> {met} by user {user_id}"
+    )
+
+    return ac
+
+
+def get_acceptance_criteria_summary(
+    version: models.RequirementVersion
+) -> dict:
+    """Get a summary of acceptance criteria completion for a version.
+
+    CR-017: Returns aggregated completion state for display.
+
+    Args:
+        version: The RequirementVersion to summarize
+
+    Returns:
+        Dict with 'total', 'met', 'unmet', and 'completion_percent' fields
+    """
+    acs = version.acceptance_criteria if version else []
+    total = len(acs)
+    met_count = sum(1 for ac in acs if ac.met)
+    unmet_count = total - met_count
+
+    return {
+        'total': total,
+        'met': met_count,
+        'unmet': unmet_count,
+        'completion_percent': round((met_count / total * 100) if total > 0 else 0, 1),
+    }

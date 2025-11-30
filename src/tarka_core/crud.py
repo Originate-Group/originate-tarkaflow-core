@@ -551,7 +551,11 @@ def update_requirement(
     - deployed_version_id (what's in production)
 
     If content (markdown) is provided, it will be parsed and a new version created.
-    Status-only or tag-only updates also create new versions.
+
+    BUG-015: Status and tags are mutable fields per TARKA-FEAT-097. Changes to
+    status or tags update the current version in-place without creating new versions.
+    Only authored content changes (content, title, description, adheres_to) trigger
+    new version creation.
 
     Args:
         db: Database session
@@ -683,7 +687,7 @@ def update_requirement(
 
                 changes.append(("status", current_status.value, metadata["status"].value))
                 new_status = metadata["status"]
-                needs_new_version = True
+                # BUG-015: Status is mutable per TARKA-FEAT-097 - no new version needed
 
             # Track field changes
             if metadata.get("title") and metadata["title"] != current_title:
@@ -706,7 +710,7 @@ def update_requirement(
 
                 changes.append(("tags", str(current_tags), str(metadata.get("tags", []))))
                 new_tags = metadata.get("tags", [])
-                needs_new_version = True
+                # BUG-015: Tags are mutable per TARKA-FEAT-097 - no new version needed
 
             # Check actual content change
             cleaned_content = strip_system_fields_from_frontmatter(update_data["content"])
@@ -776,7 +780,7 @@ def update_requirement(
 
             changes.append(("status", current_status.value, update_data["status"].value))
             new_status = update_data["status"]
-            needs_new_version = True
+            # BUG-015: Status is mutable per TARKA-FEAT-097 - no new version needed
 
         # Handle tags update
         if "tags" in update_data and update_data["tags"] != current_tags:
@@ -789,7 +793,7 @@ def update_requirement(
 
             changes.append(("tags", str(current_tags), str(update_data["tags"])))
             new_tags = update_data["tags"]
-            needs_new_version = True
+            # BUG-015: Tags are mutable per TARKA-FEAT-097 - no new version needed
 
     # CR-009: Create new version if any content/metadata changed
     if needs_new_version:
@@ -821,6 +825,27 @@ def update_requirement(
             user_id=user_id,
             change_reason="Content update" if "content" in changes else "Metadata update",
         )
+    else:
+        # BUG-015: Update mutable fields (status, tags) on current version in-place
+        # per TARKA-FEAT-097: "Version records are immutable for authored content
+        # (status and tags are mutable)"
+        status_changed = new_status != current_status
+        tags_changed = new_tags != current_tags
+        if status_changed or tags_changed:
+            current_version = get_latest_version(db, requirement_id)
+            if current_version:
+                if status_changed:
+                    current_version.status = new_status
+                    logger.info(
+                        f"Updated status in-place on {db_requirement.human_readable_id or db_requirement.id} "
+                        f"v{current_version.version_number}: {current_status.value} -> {new_status.value}"
+                    )
+                if tags_changed:
+                    current_version.tags = new_tags
+                    logger.info(
+                        f"Updated tags in-place on {db_requirement.human_readable_id or db_requirement.id} "
+                        f"v{current_version.version_number}"
+                    )
 
     # Update dependencies if provided (dependencies still live on Requirement)
     if new_dependencies is not None:

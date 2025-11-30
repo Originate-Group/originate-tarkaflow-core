@@ -533,3 +533,151 @@ def get_hierarchy_violations(
         "total": len(violations),
         "project_id": str(project_id) if project_id else None,
     }
+
+
+# =============================================================================
+# CR-017: Acceptance Criteria Entity Management (TARKA-FEAT-111)
+# =============================================================================
+
+
+@router.get("/{requirement_id}/acceptance-criteria", response_model=schemas.AcceptanceCriteriaListResponse)
+def list_acceptance_criteria(
+    requirement_id: str,
+    version_number: Optional[int] = Query(None, description="Version number (defaults to resolved version)"),
+    db: Session = Depends(get_db),
+):
+    """
+    List Acceptance Criteria for a requirement version (CR-017).
+
+    Returns all ACs for a specific requirement version with their met status.
+    If version_number is not specified, uses the resolved version (deployed -> latest approved -> latest).
+
+    - **requirement_id**: UUID or human-readable ID of the requirement
+    - **version_number**: Optional version number (defaults to resolved version)
+    """
+    # Resolve requirement
+    requirement = crud.resolve_requirement_id(db, requirement_id)
+    if not requirement:
+        raise HTTPException(status_code=404, detail="Requirement not found")
+
+    # Resolve version
+    from tarka_core.versioning import resolve_version
+    version = resolve_version(db, requirement, version_number)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # Get ACs for this version
+    acs = version.acceptance_criteria
+
+    # Build response with user email lookups
+    items = []
+    for ac in acs:
+        met_by_email = None
+        if ac.met_by_user_id:
+            user = crud.get_user_by_internal_id(db, ac.met_by_user_id)
+            met_by_email = user.email if user else None
+
+        items.append(schemas.AcceptanceCriteriaResponse(
+            id=ac.id,
+            requirement_version_id=ac.requirement_version_id,
+            ordinal=ac.ordinal,
+            criteria_text=ac.criteria_text,
+            content_hash=ac.content_hash,
+            met=ac.met,
+            met_at=ac.met_at,
+            met_by_user_id=ac.met_by_user_id,
+            met_by_email=met_by_email,
+            source_ac_id=ac.source_ac_id,
+            created_at=ac.created_at,
+        ))
+
+    return schemas.AcceptanceCriteriaListResponse(
+        items=items,
+        total=len(items),
+        requirement_id=requirement.id,
+        version_number=version.version_number,
+    )
+
+
+@router.get("/{requirement_id}/acceptance-criteria/summary", response_model=schemas.AcceptanceCriteriaSummary)
+def get_acceptance_criteria_summary(
+    requirement_id: str,
+    version_number: Optional[int] = Query(None, description="Version number (defaults to resolved version)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get a summary of AC completion for a requirement (CR-017).
+
+    Returns aggregated completion state: total, met, unmet, and completion percentage.
+
+    - **requirement_id**: UUID or human-readable ID of the requirement
+    - **version_number**: Optional version number (defaults to resolved version)
+    """
+    # Resolve requirement
+    requirement = crud.resolve_requirement_id(db, requirement_id)
+    if not requirement:
+        raise HTTPException(status_code=404, detail="Requirement not found")
+
+    # Resolve version
+    from tarka_core.versioning import resolve_version, get_acceptance_criteria_summary as get_summary
+    version = resolve_version(db, requirement, version_number)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # Get summary
+    summary = get_summary(version)
+    return schemas.AcceptanceCriteriaSummary(**summary)
+
+
+@router.patch("/acceptance-criteria/{ac_id}", response_model=schemas.AcceptanceCriteriaResponse)
+def update_acceptance_criteria(
+    ac_id: UUID,
+    update: schemas.AcceptanceCriteriaUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Update the met status of an Acceptance Criteria (CR-017).
+
+    Marks an individual AC as met or unmet without triggering a new requirement version.
+    Per TARKA-FEAT-097, met status is mutable (no version impact).
+
+    - **ac_id**: UUID of the AcceptanceCriteria to update
+    - **met**: New met status (true=met, false=unmet)
+    """
+    # Get current user (optional in solo mode)
+    current_user = get_current_user_optional(request)
+    user_id = current_user.id if current_user else None
+
+    from tarka_core.versioning import update_acceptance_criteria_met_status
+
+    # For solo mode without auth, we still need a user_id for audit
+    if not user_id:
+        # Use a placeholder - in production this would require auth
+        logger.warning("AC update without authenticated user - audit trail will be incomplete")
+
+    ac = update_acceptance_criteria_met_status(db, ac_id, update.met, user_id)
+    if not ac:
+        raise HTTPException(status_code=404, detail="Acceptance Criteria not found")
+
+    db.commit()
+
+    # Build response with user email lookup
+    met_by_email = None
+    if ac.met_by_user_id:
+        user = crud.get_user_by_internal_id(db, ac.met_by_user_id)
+        met_by_email = user.email if user else None
+
+    return schemas.AcceptanceCriteriaResponse(
+        id=ac.id,
+        requirement_version_id=ac.requirement_version_id,
+        ordinal=ac.ordinal,
+        criteria_text=ac.criteria_text,
+        content_hash=ac.content_hash,
+        met=ac.met,
+        met_at=ac.met_at,
+        met_by_user_id=ac.met_by_user_id,
+        met_by_email=met_by_email,
+        source_ac_id=ac.source_ac_id,
+        created_at=ac.created_at,
+    )

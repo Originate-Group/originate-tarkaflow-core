@@ -2215,3 +2215,157 @@ async def handle_check_work_item_drift(
         text_lines.append("*No version drift detected. Work item targets are up-to-date.*")
 
     return [TextContent(type="text", text="\n".join(text_lines))], current_scope
+
+
+# =============================================================================
+# CR-017: Acceptance Criteria Handlers (TARKA-FEAT-111)
+# =============================================================================
+
+
+async def handle_update_acceptance_criteria(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Update the met status of an Acceptance Criteria (CR-017)."""
+    ac_id = arguments["ac_id"]
+    met = arguments["met"]
+
+    response = await client.patch(
+        f"/requirements/acceptance-criteria/{ac_id}",
+        json={"met": met}
+    )
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Updated AC {ac_id} met status to {met}")
+
+    # Format response
+    status_icon = "[x]" if result.get('met') else "[ ]"
+    criteria_text = result.get('criteria_text', '')[:80]
+    if len(result.get('criteria_text', '')) > 80:
+        criteria_text += "..."
+
+    text_lines = [
+        f"## Acceptance Criteria Updated",
+        "",
+        f"**Status**: {status_icon} {'Met' if result.get('met') else 'Not Met'}",
+        f"**Criteria**: {criteria_text}",
+        "",
+    ]
+
+    if result.get('met'):
+        met_at = result.get('met_at', 'Unknown')
+        met_by = result.get('met_by_email', 'Unknown')
+        text_lines.append(f"*Marked met at {met_at} by {met_by}*")
+    else:
+        text_lines.append("*Criteria reset to unmet status*")
+
+    return [TextContent(type="text", text="\n".join(text_lines))], current_scope
+
+
+async def handle_list_acceptance_criteria(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """List Acceptance Criteria for a requirement version (CR-017)."""
+    requirement_id = arguments["requirement_id"]
+    version_number = arguments.get("version_number")
+
+    params = {}
+    if version_number is not None:
+        params["version_number"] = version_number
+
+    response = await client.get(
+        f"/requirements/{requirement_id}/acceptance-criteria",
+        params=params
+    )
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Listed ACs for requirement {requirement_id}")
+
+    # Format response
+    items = result.get('items', [])
+    total = result.get('total', 0)
+    version_num = result.get('version_number', 1)
+
+    text_lines = [
+        f"## Acceptance Criteria (v{version_num})",
+        f"**Total**: {total}",
+        "",
+    ]
+
+    met_count = sum(1 for ac in items if ac.get('met'))
+    text_lines.append(f"**Progress**: {met_count}/{total} met")
+    text_lines.append("")
+
+    for ac in items:
+        status_icon = "[x]" if ac.get('met') else "[ ]"
+        ordinal = ac.get('ordinal', 0)
+        criteria = ac.get('criteria_text', '')[:100]
+        if len(ac.get('criteria_text', '')) > 100:
+            criteria += "..."
+
+        text_lines.append(f"{status_icon} **AC {ordinal}**: {criteria}")
+
+        if ac.get('met'):
+            met_by = ac.get('met_by_email', 'Unknown')
+            text_lines.append(f"    _Met by {met_by}_")
+        text_lines.append("")
+
+    if not items:
+        text_lines.append("*No acceptance criteria defined for this version*")
+
+    return [TextContent(type="text", text="\n".join(text_lines))], current_scope
+
+
+async def handle_get_acceptance_criteria_summary(
+    arguments: dict,
+    client: httpx.AsyncClient,
+    current_scope: Optional[dict] = None
+) -> tuple[list[TextContent], Optional[dict]]:
+    """Get a summary of AC completion for a requirement (CR-017)."""
+    requirement_id = arguments["requirement_id"]
+    version_number = arguments.get("version_number")
+
+    params = {}
+    if version_number is not None:
+        params["version_number"] = version_number
+
+    response = await client.get(
+        f"/requirements/{requirement_id}/acceptance-criteria/summary",
+        params=params
+    )
+    response.raise_for_status()
+    result = response.json()
+    logger.info(f"Got AC summary for requirement {requirement_id}")
+
+    # Format response
+    total = result.get('total', 0)
+    met = result.get('met', 0)
+    unmet = result.get('unmet', 0)
+    percent = result.get('completion_percent', 0)
+
+    # Progress bar visualization
+    bar_width = 20
+    filled = int(bar_width * percent / 100)
+    bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
+
+    text_lines = [
+        f"## Acceptance Criteria Summary",
+        "",
+        f"**Progress**: {bar} {percent:.1f}%",
+        "",
+        f"- **Met**: {met}",
+        f"- **Unmet**: {unmet}",
+        f"- **Total**: {total}",
+    ]
+
+    if total == 0:
+        text_lines.append("")
+        text_lines.append("*No acceptance criteria defined for this requirement*")
+    elif met == total:
+        text_lines.append("")
+        text_lines.append("*All acceptance criteria have been met!*")
+
+    return [TextContent(type="text", text="\n".join(text_lines))], current_scope

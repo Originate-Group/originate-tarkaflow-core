@@ -1695,6 +1695,13 @@ class RequirementVersion(Base):
     requirement = relationship("Requirement", back_populates="versions", foreign_keys=[requirement_id])
     source_work_item = relationship("WorkItem", back_populates="created_versions")
     created_by_user = relationship("User")
+    # CR-017: Acceptance Criteria relationship
+    acceptance_criteria = relationship(
+        "AcceptanceCriteria",
+        back_populates="requirement_version",
+        cascade="all, delete-orphan",
+        order_by="AcceptanceCriteria.ordinal"
+    )
 
     # Constraints
     __table_args__ = (
@@ -1703,6 +1710,83 @@ class RequirementVersion(Base):
 
     def __repr__(self) -> str:
         return f"<RequirementVersion {self.requirement_id} v{self.version_number}>"
+
+
+# =============================================================================
+# CR-017: Acceptance Criteria Entity (TARKA-FEAT-111)
+# =============================================================================
+
+
+class AcceptanceCriteria(Base):
+    """
+    Acceptance Criteria as a separate entity with mutable completion status (CR-017).
+
+    Each AC belongs to a specific RequirementVersion with immutable specification
+    text but mutable completion status. This enables:
+    - Granular progress tracking without version churn
+    - Partial releases clearly indicate which ACs are met vs outstanding
+    - Clean separation: specification (what must be true) vs status (what IS true)
+
+    Key design decisions per TARKA-REQ-104:
+    - criteria_text is immutable (authored content) - changes require new version
+    - met status is mutable (no version impact)
+    - content_hash enables strict text matching for carry-forward across versions
+    - source_ac_id provides lineage tracking for audit trail
+    """
+
+    __tablename__ = "acceptance_criteria"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    requirement_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("requirement_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # Ordinal position within the version (1, 2, 3...)
+    ordinal = Column(Integer, nullable=False)
+
+    # Specification text - immutable (authored content)
+    criteria_text = Column(Text, nullable=False)
+    content_hash = Column(String(64), nullable=False)  # SHA-256 of criteria_text
+
+    # Completion status - mutable (no version impact)
+    met = Column(Boolean, nullable=False, default=False)
+    met_at = Column(DateTime, nullable=True)
+    met_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # Lineage tracking - links to predecessor AC for audit trail
+    source_ac_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("acceptance_criteria.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    # Audit
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    requirement_version = relationship("RequirementVersion", back_populates="acceptance_criteria")
+    met_by_user = relationship("User")
+    source_ac = relationship("AcceptanceCriteria", remote_side=[id])
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("requirement_version_id", "ordinal", name="uq_acceptance_criteria_version_ordinal"),
+        CheckConstraint(
+            "(met_at IS NULL AND met_by_user_id IS NULL) OR (met_at IS NOT NULL AND met_by_user_id IS NOT NULL)",
+            name="ck_acceptance_criteria_met_consistency"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AcceptanceCriteria {self.id} ordinal={self.ordinal} met={self.met}>"
 
 
 # =============================================================================

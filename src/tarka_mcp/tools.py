@@ -1908,4 +1908,55 @@ def get_tools() -> list[Tool]:
                 "required": ["work_item_id"]
             }
         ),
+        # CR-017: Acceptance Criteria Entity Management (TARKA-FEAT-111)
+        Tool(
+            name="update_acceptance_criteria",
+            description="Update the met status of an Acceptance Criteria (CR-017: TARKA-FEAT-111). "
+                       "\n\nMarks an individual AC as met or unmet without triggering a new requirement version. "
+                       "This enables granular progress tracking for partial implementations."
+                       "\n\nKEY BEHAVIOR (per TARKA-FEAT-097):"
+                       "\n• Met status is MUTABLE - changes do not create new versions"
+                       "\n• Criteria text is IMMUTABLE - text changes require new version"
+                       "\n• When AC text unchanged across versions, met status is carried forward"
+                       "\n\nUSE CASES:"
+                       "\n• Mark AC as met when implementation complete: update_acceptance_criteria(ac_id='...', met=true)"
+                       "\n• Unmark AC if discovered not actually met: update_acceptance_criteria(ac_id='...', met=false)"
+                       "\n\nRETURNS: Updated AcceptanceCriteria record with met status, timestamp, and user",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ac_id": {"type": "string", "description": "UUID of the AcceptanceCriteria to update"},
+                    "met": {"type": "boolean", "description": "New met status (true=met, false=unmet)"}
+                },
+                "required": ["ac_id", "met"]
+            }
+        ),
+        Tool(
+            name="list_acceptance_criteria",
+            description="List Acceptance Criteria for a requirement version (CR-017: TARKA-FEAT-111). "
+                       "\n\nReturns all ACs for a specific requirement version with their met status."
+                       "\n\nRETURNS: List of AcceptanceCriteria with ordinal, criteria_text, met status, and lineage",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "requirement_id": {"type": "string", "description": "UUID or human-readable ID of the requirement"},
+                    "version_number": {"type": "integer", "description": "Optional version number (defaults to resolved version)"}
+                },
+                "required": ["requirement_id"]
+            }
+        ),
+        Tool(
+            name="get_acceptance_criteria_summary",
+            description="Get a summary of AC completion for a requirement (CR-017: TARKA-FEAT-111). "
+                       "\n\nReturns aggregated completion state: total, met, unmet, and completion percentage."
+                       "\n\nRETURNS: Summary dict with total, met, unmet, completion_percent",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "requirement_id": {"type": "string", "description": "UUID or human-readable ID of the requirement"},
+                    "version_number": {"type": "integer", "description": "Optional version number (defaults to resolved version)"}
+                },
+                "required": ["requirement_id"]
+            }
+        ),
     ]

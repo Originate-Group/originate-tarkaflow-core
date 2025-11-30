@@ -524,3 +524,87 @@ def merge_content(original_content: str, updates: Dict[str, Any]) -> str:
     new_content = f"---\n{frontmatter_yaml}---\n\n{body}"
 
     return new_content
+
+
+# =============================================================================
+# CR-017: Acceptance Criteria Extraction (TARKA-FEAT-111)
+# =============================================================================
+
+
+def extract_acceptance_criteria(content: str) -> list[dict]:
+    """Extract Acceptance Criteria from markdown content.
+
+    CR-017: Parses markdown checkbox items from the Acceptance Criteria section.
+    Each `- [ ]` or `- [x]` item is extracted as a separate AC record.
+
+    Supported formats:
+    - `- [ ] criteria text` (unchecked)
+    - `- [x] criteria text` (checked)
+    - `- [X] criteria text` (checked, case insensitive)
+
+    Args:
+        content: The markdown content to parse
+
+    Returns:
+        List of dicts with keys:
+        - criteria_text: The AC text (trimmed)
+        - met: Boolean indicating if checked ([x])
+        - ordinal: Position in the list (1-indexed)
+
+    Example:
+        >>> content = '''
+        ... ## Acceptance Criteria
+        ... - [ ] User can log in
+        ... - [x] System validates credentials
+        ... '''
+        >>> extract_acceptance_criteria(content)
+        [
+            {'criteria_text': 'User can log in', 'met': False, 'ordinal': 1},
+            {'criteria_text': 'System validates credentials', 'met': True, 'ordinal': 2}
+        ]
+    """
+    if not content:
+        return []
+
+    # Find Acceptance Criteria section
+    # Look for "## Acceptance Criteria" header
+    ac_section_pattern = r'##\s+Acceptance\s+Criteria\s*\n(.*?)(?=\n##|\n#\s|\Z)'
+    ac_match = re.search(ac_section_pattern, content, re.DOTALL | re.IGNORECASE)
+
+    if not ac_match:
+        return []
+
+    ac_section = ac_match.group(1)
+
+    # Extract checkbox items
+    # Pattern matches: - [ ] text or - [x] text or - [X] text
+    checkbox_pattern = r'^-\s*\[([ xX])\]\s*(.+?)$'
+
+    criteria_list = []
+    ordinal = 1
+
+    for line in ac_section.split('\n'):
+        line = line.strip()
+        match = re.match(checkbox_pattern, line)
+        if match:
+            checkbox_state = match.group(1)
+            criteria_text = match.group(2).strip()
+
+            # Skip placeholder text like "[User-observable outcome 1]"
+            if criteria_text.startswith('[') and criteria_text.endswith(']'):
+                continue
+
+            # Skip empty or very short criteria
+            if len(criteria_text) < 3:
+                continue
+
+            met = checkbox_state.lower() == 'x'
+
+            criteria_list.append({
+                'criteria_text': criteria_text,
+                'met': met,
+                'ordinal': ordinal,
+            })
+            ordinal += 1
+
+    return criteria_list
