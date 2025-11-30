@@ -3466,3 +3466,11 @@ def list_agent_director_mappings(
         query = query.filter(models.AgentDirector.director_id == director_id)
 
     return query.order_by(models.AgentDirector.created_at.desc()).all()
+
+
+# =============================================================================
+# Aliases for backward compatibility and convenience
+# =============================================================================
+
+# CR-017: Alias for resolve_requirement_id used by AC endpoints
+resolve_requirement_id = get_requirement_by_any_id
