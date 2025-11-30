@@ -31,7 +31,25 @@ deployment approaches, or any implementation details. Those decisions
 belong to Code Claude during implementation.
 -->
 
-## Success Criteria
+## Acceptance Criteria
+
+<!--
+CR-017: Acceptance Criteria are extracted from content and tracked as separate
+entities. This enables marking individual ACs as "met" without triggering
+new requirement versions.
+
+FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
+will be extracted as a separate AcceptanceCriteria record.
+
+Use ### subsections to organize ACs by category (e.g., "### Success Criteria",
+"### Compliance", "### User Experience"). Categories are preserved when
+ACs are extracted.
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
+-->
+
+### Success Criteria
 
 <!--
 List measurable BUSINESS outcomes, not technical metrics.
@@ -42,7 +60,6 @@ GOOD: "SOC2 compliance audit passed"
 
 BAD: "API response time under 100ms"
 BAD: "Database supports 10,000 concurrent connections"
-BAD: "Docker containers deploy in under 5 minutes"
 -->
 
 - [ ] [Business outcome 1]

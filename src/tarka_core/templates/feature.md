@@ -67,6 +67,17 @@ new requirement versions.
 FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
 will be extracted as a separate AcceptanceCriteria record.
 
+Use ### subsections to organize ACs by category (e.g., "### Functional",
+"### Success Criteria", "### Edge Cases"). Categories are preserved when
+ACs are extracted.
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
+-->
+
+### Functional
+
+<!--
 What must be TRUE for this feature to be complete?
 Write from the USER's perspective - what they can observe/verify.
 
@@ -75,16 +86,13 @@ GOOD: "System prevents creating orphaned requirements"
 
 BAD: "API returns 400 if parent_id is invalid UUID"
 BAD: "Database constraint enforces referential integrity"
-
-NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
-without editing requirement content.
 -->
 
 - [ ] [User-observable outcome 1]
 - [ ] [User-observable outcome 2]
 - [ ] [Business rule that must be enforced]
 
-## Success Criteria
+### Success Criteria
 
 <!--
 How do we know this delivers value? Business outcomes only.

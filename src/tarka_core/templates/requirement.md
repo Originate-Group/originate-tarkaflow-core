@@ -55,14 +55,22 @@ new requirement versions.
 FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
 will be extracted as a separate AcceptanceCriteria record.
 
+Use ### subsections to organize ACs by category (e.g., "### Functional",
+"### Edge Cases", "### Performance"). Categories are preserved when
+ACs are extracted.
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
+-->
+
+### Functional
+
+<!--
 What must be TRUE when this is complete?
 Focus on OBSERVABLE behavior, not implementation details.
 
 GOOD: "Requests beyond limit receive 429 response with retry guidance"
 BAD: "Redis INCR returns value > 100"
-
-NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
-without editing requirement content.
 -->
 
 - [ ] [Observable behavior 1]

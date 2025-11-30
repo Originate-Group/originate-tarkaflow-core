@@ -75,7 +75,25 @@ BAD: "Use Fernet encryption with AES-256 for PII fields"
 
 **Compliance Requirements**: [GDPR, SOC2, etc. - if applicable]
 
-## Success Criteria
+## Acceptance Criteria
+
+<!--
+CR-017: Acceptance Criteria are extracted from content and tracked as separate
+entities. This enables marking individual ACs as "met" without triggering
+new requirement versions.
+
+FORMAT: Use markdown checkboxes. Each line starting with "- [ ]" or "- [x]"
+will be extracted as a separate AcceptanceCriteria record.
+
+Use ### subsections to organize ACs by category (e.g., "### Success Criteria",
+"### Capabilities", "### Integrations"). Categories are preserved when
+ACs are extracted.
+
+NOTE: Use the update_acceptance_criteria MCP tool to mark ACs as met
+without editing requirement content.
+-->
+
+### Success Criteria
 
 <!--
 Business outcomes only. Code Claude will determine technical metrics.
