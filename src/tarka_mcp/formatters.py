@@ -104,11 +104,16 @@ def format_requirement_summary(req: dict) -> str:
     status = req.get('status', 'unknown')
     title = req.get('title', '(untitled)')
 
+    # BUG-019: Include version info to avoid N+1 queries
+    version_number = req.get('version_number')
+    total_versions = req.get('total_versions', 0)
+    version_suffix = f" v{version_number}/{total_versions}" if version_number else ""
+
     # Show dependency count if present
     depends_on = req.get('depends_on', [])
     deps_suffix = f" (deps: {len(depends_on)})" if depends_on else ""
 
-    return f"[{readable_id}] {status}: {title}{deps_suffix}"
+    return f"[{readable_id}] {status}: {title}{version_suffix}{deps_suffix}"
 
 
 def format_history(entry: dict) -> str:
