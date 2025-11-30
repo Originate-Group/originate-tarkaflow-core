@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, and_, cast, case, Text
+from sqlalchemy import or_, and_, cast, case, String
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -472,7 +472,8 @@ def get_requirements(
     # CR-009: Filter on resolved version's tags
     if tags:
         # PostgreSQL array contains operator (@>) - requirement must have ALL specified tags
-        query = query.filter(models.RequirementVersion.tags.op('@>')(cast(tags, ARRAY(Text))))
+        # TARKA-BUG-021: Must cast to ARRAY(String) to match varchar[] column type (not ARRAY(Text))
+        query = query.filter(models.RequirementVersion.tags.op('@>')(cast(tags, ARRAY(String))))
 
     # CR-004 Phase 4: DEPLOYED status removed. Filter by deployed_version_id instead.
     # include_deployed=False excludes requirements that have been deployed to production
