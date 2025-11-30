@@ -485,6 +485,7 @@ async def apply_project_scope_defaults(
     scoped_tools = {
         "list_requirements",
         "create_requirement",  # For epics only
+        "create_work_item",  # BUG-016: project_id now required
     }
 
     if tool_name not in scoped_tools:
@@ -504,6 +505,12 @@ async def apply_project_scope_defaults(
         if "project_id" not in arguments:
             arguments["project_id"] = current_scope["project_id"]
             logger.info(f"Using session project scope for listing: {current_scope['name']}")
+
+    # For create_work_item, apply scope if project_id not explicitly provided (BUG-016)
+    elif tool_name == "create_work_item":
+        if "project_id" not in arguments:
+            arguments["project_id"] = current_scope["project_id"]
+            logger.info(f"Using session project scope for work item: {current_scope['name']}")
 
     return arguments
 

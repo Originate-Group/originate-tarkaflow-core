@@ -1715,7 +1715,7 @@ def get_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "organization_id": {"type": "string", "description": "Organization UUID (required)"},
-                    "project_id": {"type": "string", "description": "Project UUID (optional)"},
+                    "project_id": {"type": "string", "description": "Project UUID (required)"},
                     "work_item_type": {"type": "string", "enum": ["cr", "bug", "debt", "release"], "description": "Type of work item (required)"},
                     "title": {"type": "string", "description": "Work item title (required)"},
                     "description": {"type": "string", "description": "Detailed description"},
@@ -1725,7 +1725,7 @@ def get_tools() -> list[Tool]:
                     "affects": {"type": "array", "items": {"type": "string"}, "description": "Requirement IDs (UUID or human-readable) affected by this work"},
                     "proposed_content": {"type": "object", "description": "For CRs: {requirement_id: 'new markdown content'}"}
                 },
-                "required": ["organization_id", "work_item_type", "title"]
+                "required": ["organization_id", "project_id", "work_item_type", "title"]
             }
         ),
         Tool(

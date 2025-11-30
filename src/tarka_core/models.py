@@ -1431,7 +1431,7 @@ class WorkItem(Base):
 
     # Scope
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)  # BUG-016: Required for HRID generation
 
     # Core fields
     work_item_type = Column(
